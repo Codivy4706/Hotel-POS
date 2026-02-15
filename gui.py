@@ -2,8 +2,8 @@ from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon, QFont, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QGridLayout, QMessageBox, QDialog, 
-    QScrollArea, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem, 
+    QPushButton, QLabel, QGridLayout, QMessageBox, QDialog, QWidget,
+    QScrollArea, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog,
     QHeaderView, QTabWidget, QFormLayout, QTextEdit, QFrame, QGraphicsDropShadowEffect,
     QCheckBox, QInputDialog, QListWidget, QStackedWidget, QToolButton, QAbstractItemView
 )
@@ -507,66 +507,99 @@ class RoomsTab(QWidget):
         self.main_window = main_window
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
+
+        # 1. TOP HEADER (Identical to Tables Tab)
+        top_row = QHBoxLayout()
+        lbl = QLabel("HOTEL ROOMS")
+        lbl.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        
+        btn_refresh = QPushButton("🔄 Refresh Rooms")
+        btn_refresh.setFixedWidth(150)
+        btn_refresh.clicked.connect(self.refresh_rooms)
+        
+        top_row.addWidget(lbl)
+        top_row.addStretch()
+        top_row.addWidget(btn_refresh)
+        self.layout.addLayout(top_row)
+
+        # 2. SCROLLABLE GRID CONTAINER
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none; background-color: transparent;")
+        
+        self.container = QWidget()
+        self.grid_layout = QGridLayout()
+        self.container.setLayout(self.grid_layout)
+        
+        scroll.setWidget(self.container)
+        self.layout.addWidget(scroll)
+
+        # 3. INITIAL LOAD
         self.refresh_rooms()
 
     def refresh_rooms(self):
-        # Clear previous
-        if self.layout.count():
-            child = self.layout.takeAt(0)
-            if child.widget(): child.widget().deleteLater()
-
-        container = QWidget()
-        grid = QGridLayout()
-        container.setLayout(grid)
+        """Redraws the grid while keeping all your database logic."""
+        # Clear existing buttons
+        for i in reversed(range(self.grid_layout.count())): 
+            widget = self.grid_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+            
+        rooms = database.get_all_rooms() # (num, type, price, status, guest_name)
         
-        rooms = database.get_all_rooms()
-        # rooms data: (num, type, price, status, guest_name)
-        
-        r, c = 0, 0
+        row, col = 0, 0
         for r_num, r_type, price, status, guest in rooms:
             
-            # Color Logic
+            # Color & Text Logic from your original code
             if status == "AVAILABLE":
-                color = "#27ae60" # Green
-                text = f"Room {r_num}\n\n{r_type}\n₹{price}/night\n\nAVAILABLE"
+                color = "#66BB6A" # Material Green
+                hover = "#388E3C"
+                text = f"Room {r_num}\n{r_type}\n₹{int(price)}/night\n\nAVAILABLE"
             else:
-                color = "#c0392b" # Red
-                text = f"Room {r_num}\n\n{guest}\nOCCUPIED"
+                color = "#EF5350" # Material Red
+                hover = "#D32F2F"
+                text = f"Room {r_num}\n{guest}\n\nOCCUPIED"
 
-            card = QPushButton(text)
-            card.setFixedSize(180, 150)
-            card.setStyleSheet(f"""
-                QPushButton {{ background-color: {color}; color: white; border-radius: 10px; font-weight: bold; font-size: 14px; }}
-                QPushButton:hover {{ border: 3px solid white; }}
+            btn = QPushButton(text)
+            btn.setFixedSize(190, 140)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {color}; color: white; border-radius: 12px;
+                    font-weight: bold; font-size: 13px; border: none;
+                }}
+                QPushButton:hover {{ background-color: {hover}; }}
             """)
-            card.clicked.connect(lambda ch, x=r_num, s=status: self.handle_room_click(x, s))
+
+            # Add the "Floating" shadow effect
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(10)
+            shadow.setYOffset(4)
+            shadow.setColor(QColor(0, 0, 0, 50))
+            btn.setGraphicsEffect(shadow)
+
+            # --- RESTORED: Your handle_room_click logic ---
+            btn.clicked.connect(lambda ch, x=r_num, s=status: self.handle_room_click(x, s))
             
-            grid.addWidget(card, r, c)
-            c += 1
-            if c > 4: 
-                c = 0 
-                r += 1
-                
-        self.layout.addWidget(container)
+            self.grid_layout.addWidget(btn, row, col)
+            col += 1
+            if col > 3: 
+                col = 0
+                row += 1
 
     def handle_room_click(self, room_num, status):
         if status == "AVAILABLE":
-            # Show Check-In Dialog
             self.show_checkin_dialog(room_num)
         else:
-            # Show Check-Out / Room Service Options
             self.show_occupied_options(room_num)
 
     def show_checkin_dialog(self, room_num):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Check In - Room {room_num}")
         dlg.setFixedSize(300, 200)
-        layout = QFormLayout()
-        dlg.setLayout(layout)
+        layout = QFormLayout(dlg)
         
         inp_name = QLineEdit()
         inp_phone = QLineEdit()
-        
         layout.addRow("Guest Name:", inp_name)
         layout.addRow("Phone:", inp_phone)
         
@@ -574,7 +607,6 @@ class RoomsTab(QWidget):
         btn_checkin.setStyleSheet("background-color: #27ae60; color: white; padding: 10px;")
         btn_checkin.clicked.connect(lambda: self.process_checkin(dlg, room_num, inp_name.text(), inp_phone.text()))
         layout.addRow(btn_checkin)
-        
         dlg.exec()
 
     def process_checkin(self, dlg, room_num, name, phone):
@@ -585,88 +617,61 @@ class RoomsTab(QWidget):
         QMessageBox.information(self, "Success", f"Room {room_num} Checked In!")
 
     def show_occupied_options(self, room_num):
-        msg = QMessageBox()
+        msg = QMessageBox(self)
         msg.setWindowTitle(f"Room {room_num} Management")
         msg.setText(f"Guest is in Room {room_num}.\nWhat would you like to do?")
         
-        # Add Custom Buttons
         btn_food = msg.addButton("🍽️ Room Service", QMessageBox.ButtonRole.ActionRole)
         btn_checkout = msg.addButton("💰 Check Out & Bill", QMessageBox.ButtonRole.AcceptRole)
-        btn_cancel = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         
         msg.exec()
-        
         if msg.clickedButton() == btn_food:
-            # Open POS in Room Mode
             self.open_room_service(room_num)
-            
         elif msg.clickedButton() == btn_checkout:
             self.process_checkout(room_num)
 
     def open_room_service(self, room_num):
-        # reuse OrderWindow but pass is_room=True
-        win = OrderWindow(room_num, is_room=True, parent=self.main_window)
-        win.exec()
+        self.room_pos = POSInterface("ROOM_SERVICE", table_num=room_num, tab_ref=self)
+        self.room_pos.setWindowTitle(f"Room Service - Room {room_num}")
+        self.room_pos.resize(1250, 700) 
+        self.room_pos.setWindowFlags(Qt.WindowType.Window) 
+        self.room_pos.show()
 
     def process_checkout(self, room_num):
-        # 1. Gather Data
+        # 1. Gather Room & Guest Data
         room_data = database.get_all_rooms()
-        room_price = 0
-        guest_name = "Guest"
-        guest_phone = ""
-        check_in = ""
-        
+        price_per_night, guest_name = 0, "Guest"
         for r in room_data:
             if str(r[0]) == str(room_num):
-                room_price = r[2]
-                guest_name = r[4]
+                price_per_night, guest_name = r[2], r[4]
                 break
-                
-        # Get extra guest info (Address/Phone)
-        import sqlite3
-        conn = sqlite3.connect(database.DB_NAME)
-        cur = conn.cursor()
-        # Assuming you might have added 'guest_address' column later, 
-        # for now we pass a placeholder or fetch if you added it.
-        cur.execute("SELECT guest_phone, check_in_date FROM bookings WHERE room_number = ? AND status = 'ACTIVE'", (room_num,))
-        res = cur.fetchone()
-        conn.close()
         
-        guest_full_data = (guest_name, res[0] if res else "", res[1] if res else "", "Guest Address City")
-        
-        # 2. Get Itemized Food List
+        # 2. Get Food Total
         food_items = database.get_room_order_items(room_num)
-        # Calculate food total from the list
         food_total = sum(item[3] for item in food_items)
         
-        # 3. Calculate Estimate (Pre-Tax)
-        est_total = room_price + food_total
-        
-        # 4. Payment Mode Dialog
-        # We create a custom dialog to ask for payment mode
+        # 3. Checkout Dialog
         dlg = QDialog(self)
         dlg.setWindowTitle("Checkout & Payment")
-        layout = QVBoxLayout()
-        dlg.setLayout(layout)
+        v_layout = QVBoxLayout(dlg)
+        v_layout.addWidget(QLabel(f"Room Charges: ₹{price_per_night}"))
+        v_layout.addWidget(QLabel(f"Food Charges: ₹{food_total}"))
+        v_layout.addWidget(QLabel(f"<b>Total: ₹{price_per_night + food_total}</b>"))
         
-        layout.addWidget(QLabel(f"Total Pending (Approx): ₹{est_total}"))
-        layout.addWidget(QLabel("Select Payment Mode:"))
         combo_pay = QComboBox()
-        combo_pay.addItems(["CASH", "CREDIT CARD", "UPI / QR", "BANK TRANSFER"])
-        layout.addWidget(combo_pay)
+        combo_pay.addItems(["CASH", "UPI / QR", "CARD"])
+        v_layout.addWidget(QLabel("Payment Mode:"))
+        v_layout.addWidget(combo_pay)
         
         btn_pay = QPushButton("🖨️ Generate Invoice & Checkout")
         btn_pay.setStyleSheet("background-color: #27ae60; color: white; padding: 10px;")
         btn_pay.clicked.connect(dlg.accept)
-        layout.addWidget(btn_pay)
+        v_layout.addWidget(btn_pay)
         
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            pay_mode = combo_pay.currentText()
-            
-            # 5. Generate PDF
-            printer.generate_room_bill(room_num, guest_full_data, food_items, room_price, pay_mode)
-            
-            # 6. Close Records
+            # 4. Finalize
+            printer.generate_room_bill(room_num, (guest_name, ""), food_items, price_per_night, combo_pay.currentText())
             database.checkout_room_orders(room_num)
             database.check_out_guest(room_num)
             self.refresh_rooms()
@@ -960,9 +965,6 @@ class SettingsTab(QWidget):
             self.refresh_rooms_list()
 
     def backup_data(self):
-        import shutil
-        import datetime
-        from PyQt6.QtWidgets import QFileDialog
         
         src = database.DB_NAME
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
@@ -1108,45 +1110,6 @@ class MenuManager(QWidget):
         else:
             QMessageBox.warning(self, "Info", "Enter item name first!")
 
-    def add_item(self):
-        name = self.inp_name.text()
-        p_dine = self.inp_price_dine.text()
-        p_del = self.inp_price_del.text()
-        cat = self.inp_cat.currentText()
-        img = self.inp_image.text()
-        tax = self.inp_tax.text()
-        
-        if name and p_dine and p_del and tax:
-            # Send all 6 arguments to database
-            database.add_item(name, p_dine, p_del, cat, img, tax)
-            
-            self.refresh_table()
-            # Clear inputs
-            self.inp_name.clear()
-            self.inp_price_dine.clear()
-            self.inp_price_del.clear()
-            self.inp_image.clear()
-            self.auto_set_tax(cat) # Reset tax to default
-        else:
-            QMessageBox.warning(self, "Error", "Name, Both Prices, and Tax are required!")
-
-    def refresh_table(self):
-        self.table.setRowCount(0)
-        # Fetch raw data: (id, name, p_dine, p_del, cat, img, tax)
-        items = database.get_all_items() 
-        self.table.setRowCount(len(items))
-        
-        for r, item in enumerate(items):
-            self.table.setItem(r, 0, QTableWidgetItem(str(item[0]))) # ID
-            self.table.setItem(r, 1, QTableWidgetItem(item[1]))      # Name
-            self.table.setItem(r, 2, QTableWidgetItem(str(item[2]))) # Dine Price
-            self.table.setItem(r, 3, QTableWidgetItem(str(item[3]))) # Del Price
-            self.table.setItem(r, 4, QTableWidgetItem(item[4]))      # Category
-            
-            # Tax (Handle cases where old items might have None for tax)
-            tax_val = str(item[6]) if len(item) > 6 and item[6] is not None else "5.0"
-            self.table.setItem(r, 5, QTableWidgetItem(tax_val))
-
     def delete_item(self):
         row = self.table.currentRow()
         if row >= 0:
@@ -1171,55 +1134,67 @@ class MenuManager(QWidget):
         if fname: self.inp_image.setText(fname)
 
     def search_image_online(self):
-        import webbrowser
         if self.inp_name.text():
             webbrowser.open(f"https://www.google.com/search?tbm=isch&q={self.inp_name.text()}")
+        else:
+            QMessageBox.warning(self, "Info", "Enter item name first!")
 
     def add_item(self):
+        """Captures all 6 inputs and sends them to the database."""
         name = self.inp_name.text()
         p_dine = self.inp_price_dine.text()
         p_del = self.inp_price_del.text()
         cat = self.inp_cat.currentText()
         img = self.inp_image.text()
+        tax = self.inp_tax.text()
         
-        if name and p_dine and p_del:
-            # Call DB with ALL 5 Arguments
-            database.add_item(name, p_dine, p_del, cat, img)
+        if name and p_dine and p_del and tax:
+            # Pass all 6 arguments to database.py
+            database.add_item(name, p_dine, p_del, cat, img, tax)
             
             self.refresh_table()
-            self.inp_name.clear(); self.inp_price_dine.clear(); self.inp_price_del.clear()
+            # Clear inputs
+            self.inp_name.clear()
+            self.inp_price_dine.clear()
+            self.inp_price_del.clear()
             self.inp_image.clear()
+            self.auto_set_tax(cat) 
         else:
-            QMessageBox.warning(self, "Error", "Name and Both Prices are required!")
+            QMessageBox.warning(self, "Error", "Name, Both Prices, and Tax are required!")
 
     def refresh_table(self):
+        """Refreshes the table and explicitly fills the 6th Tax column."""
         self.table.setRowCount(0)
-        items = database.get_all_items() # Returns (id, name, p1, p2, cat, img)
+        # Fetch data: (id[0], name[1], p_dine[2], p_del[3], cat[4], img[5], tax[6])
+        items = database.get_all_items() 
         self.table.setRowCount(len(items))
+        
         for r, item in enumerate(items):
+            # Columns 0 to 4: ID, Name, Dine, Del, Category
             self.table.setItem(r, 0, QTableWidgetItem(str(item[0])))
-            self.table.setItem(r, 1, QTableWidgetItem(item[1]))
-            self.table.setItem(r, 2, QTableWidgetItem(str(item[2]))) # Dine
-            self.table.setItem(r, 3, QTableWidgetItem(str(item[3]))) # Del
-            self.table.setItem(r, 4, QTableWidgetItem(item[4]))
+            self.table.setItem(r, 1, QTableWidgetItem(str(item[1])))
+            self.table.setItem(r, 2, QTableWidgetItem(str(item[2])))
+            self.table.setItem(r, 3, QTableWidgetItem(str(item[3])))
+            self.table.setItem(r, 4, QTableWidgetItem(str(item[4])))
+            
+            # --- THE FIX: FILL THE 6th COLUMN (Index 5) ---
+            # Data is at index 6 in the database row
+            tax_val = item[6] if len(item) > 6 and item[6] is not None else "5.0"
+            self.table.setItem(r, 5, QTableWidgetItem(f"{tax_val}%"))
 
 # ==========================================
 # 5.POS INTERFACE
 # ==========================================
 class POSInterface(QWidget):
     def __init__(self, mode, table_num=None, parent=None, tab_ref=None):
-        super().__init__(None)
+        super().__init__(parent)
         self.tab_ref = tab_ref
         self.mode = mode 
         self.table_num = table_num 
         self.is_room = (mode == "ROOM_SERVICE")
         self.cart = []
         self.customer_info = None 
-        
-        # --- FIX: THIS WAS MISSING ---
         self.current_category = "ALL ITEMS" 
-        # -----------------------------
-        
         self.db_price_mode = "DELIVERY" if mode == "DELIVERY" else "DINE_IN"
         
         if self.table_num:
@@ -1409,11 +1384,14 @@ class POSInterface(QWidget):
         self.cat_layout.addStretch()
 
     def refresh_menu(self):
+        """Draws the POS grid buttons for items."""
         # 1. Clear previous buttons
         for i in reversed(range(self.menu_grid.count())): 
-            self.menu_grid.itemAt(i).widget().setParent(None)
-            
-        # 2. Get Items from DB
+            widget = self.menu_grid.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+                
+        # 2. Get Items from DB (Now returns tax_rate from the items table)
         self.all_items = database.get_menu_items(self.db_price_mode)
         
         # 3. Filter (Search/Category)
@@ -1426,8 +1404,8 @@ class POSInterface(QWidget):
         # 4. Draw Buttons
         row, col = 0, 0
         for item in filtered:
-            # Create a big square button (ToolButton)
             btn = QToolButton()
+            # Displaying name and price on the button
             btn.setText(f"{item['name']}\n₹ {item['price']}")
             btn.setFixedSize(130, 130)
             btn.setStyleSheet("""
@@ -1442,19 +1420,17 @@ class POSInterface(QWidget):
             """)
             
             # --- IMAGE DISPLAY LOGIC ---
-            # If database has a path AND the file actually exists
-            if item['image'] and os.path.exists(item['image']):
+            if item.get('image') and os.path.exists(item['image']):
                 btn.setIcon(QIcon(item['image']))
-                btn.setIconSize(QSize(80, 80)) # Big icon
-                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon) # Text below image
-            # ---------------------------
+                btn.setIconSize(QSize(80, 80))
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             
-            # Click event
+            # --- CLICK EVENT: Passes the 'item' dictionary containing 'tax_rate' ---
             btn.clicked.connect(lambda checked, i=item: self.add_to_cart(i))
             
             self.menu_grid.addWidget(btn, row, col)
             col += 1
-            if col > 3: # 4 items per row
+            if col > 3: 
                 col = 0
                 row += 1
 
@@ -1675,12 +1651,8 @@ class POSInterface(QWidget):
         order_type = "ROOM_SERVICE" if self.mode == "ROOM_SERVICE" else "DINE_IN"
         database.save_order(self.table_num, self.cart, order_type)
         
-        p = self.parent()
-        while p:
-            if hasattr(p, 'refresh_tables'):
-                p.refresh_tables()
-                break
-            p = p.parent()
+        if self.tab_ref and hasattr(self.tab_ref, 'refresh_tables'):
+            self.tab_ref.refresh_tables()
 
         # 4. Print KOT Logic
         if self.is_room:
@@ -1727,9 +1699,9 @@ class POSInterface(QWidget):
         # 3. Checkout (Sets DB status to AVAILABLE)
         database.checkout_table(self.table_num) 
         
-        # --- THE FIX: Refresh Parent Table Map IMMEDIATELY ---
-        if self.parent() and hasattr(self.parent(), 'refresh_tables'):
-            self.parent().refresh_tables()
+        # --- REFRESH TABLES ---
+        if self.tab_ref and hasattr(self.tab_ref, 'refresh_tables'):
+            self.tab_ref.refresh_tables()
         # ----------------------------------------------------
             
         QMessageBox.information(self, "Closed", f"Bill Generated!")

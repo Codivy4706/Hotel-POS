@@ -240,7 +240,7 @@ def generate_kot(table_num, cart_items):
     c.setFont("Helvetica-Bold", 14)
     # Box around table name
     c.rect(5*mm, y-6*mm, width-10*mm, 10*mm)
-    c.drawCentredString(mid_x, y-4*mm, f"TABLE {table_num}")
+    c.drawCentredString(mid_x, y-4*mm, f"{table_num}")
     y -= 12 * mm
     
     dt = datetime.datetime.now().strftime("%d-%b %H:%M")
@@ -306,23 +306,26 @@ def print_file(filename):
 
 def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None):
     """
-    Generates a Standard Bill for Dine-in Tables or Takeout with Dynamic Tax.
+    Generates a Standard Bill with a dynamic height to minimize thermal paper waste.
     """
     import os
-    
+    import datetime
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
     timestamp = datetime.datetime.now().strftime("%H%M%S")
-    # Clean filename
     safe_table = str(table_num).replace(' ', '_')
     filename = f"Bill_{safe_table}_{timestamp}.pdf"
     
-    # Dynamic Height Calculation
-    # Base height (header/footer) + Item rows + Tax breakdown rows
-    base_height = 200 
-    item_height = len(cart_items) * 20
-    tax_height = 50 # Extra space for tax/discount summary
+    # --- DYNAMIC HEIGHT CALCULATION ---
+    # base_height covers header, table headers, and final totals (~90mm)
+    # item_height adds space for each product line and its tax note
+    base_height = 90 
+    item_height = len(cart_items) * 10 
+    tax_summary_height = 15 if discount > 0 else 10
     
-    width = 80 * mm # Standard Receipt Width (80mm)
-    height = (base_height + item_height + tax_height) * mm 
+    width = 80 * mm 
+    height = (base_height + item_height + tax_summary_height) * mm 
     
     c = canvas.Canvas(filename, pagesize=(width, height))
     
@@ -352,16 +355,15 @@ def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None
     c.setFont("Helvetica", 9)
     dt_str = datetime.datetime.now().strftime("%d-%b %H:%M")
     c.drawRightString(right_x, y, dt_str)
-    y -= 5 * mm
+    y -= 6 * mm
     
     if customer:
         c.drawString(left_x, y, f"Guest: {customer['name'][:20]}")
         y -= 5 * mm
         if customer.get('address'):
-            c.setFont("Helvetica-Oblique", 8) # Slightly smaller/italic for address
-            # We use drawString but wrap it or truncate it so it doesn't overlap the price
+            c.setFont("Helvetica-Oblique", 8)
             address_text = f"Addr: {customer['address']}"
-            c.drawString(left_x, y, address_text[:45]) # Show first 45 chars
+            c.drawString(left_x, y, address_text[:45]) 
             y -= 5 * mm
             c.setFont("Helvetica", 9)
 
@@ -373,13 +375,11 @@ def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None
     c.drawString(left_x, y, "Item")
     c.drawString(left_x + 35*mm, y, "Qty")
     c.drawRightString(right_x, y, "Price")
-    y -= 5 * mm
+    y -= 4 * mm
     c.line(left_x, y, right_x, y)
     y -= 5 * mm
     
     # --- ITEMS LOOP ---
-    c.setFont("Helvetica", 9)
-    
     subtotal = 0.0
     total_tax = 0.0
     
@@ -387,47 +387,38 @@ def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None
         name = item['name']
         qty = item['qty']
         unit_price = float(item['price'])
-        
-        # Calculate Item Totals
         line_total = unit_price * qty
-        
-        # Get Tax Rate (Default to 5.0 if missing)
         tax_rate = item.get('tax_rate', 5.0) 
         line_tax = line_total * (tax_rate / 100)
         
         subtotal += line_total
         total_tax += line_tax
         
-        # Draw Item Line
+        c.setFont("Helvetica", 9)
         c.drawString(left_x, y, f"{name[:18]}")
         c.drawString(left_x + 38*mm, y, str(qty))
         c.drawRightString(right_x, y, f"{line_total:.2f}")
-        y -= 5 * mm
+        y -= 4 * mm
         
-        c.setFont("Helvetica", 7)                                                  #test
-        c.drawString(left_x, y, f"(@ {tax_rate}%)")                                #test
-        c.setFont("Helvetica", 9)                                                  #test
-        y -= 4 * mm                                                                #test
+        c.setFont("Helvetica-Oblique", 7)
+        c.drawString(left_x, y, f"(@ {tax_rate}%)")
+        y -= 5 * mm
 
     c.line(left_x, y, right_x, y)
     y -= 5 * mm
     
     # --- CALCULATIONS ---
     final_total = subtotal + total_tax - discount
-    
     c.setFont("Helvetica", 10)
     
-    # Subtotal
     c.drawString(left_x + 20*mm, y, "Subtotal:")
     c.drawRightString(right_x, y, f"{subtotal:.2f}")
     y -= 5 * mm
     
-    # Tax
     c.drawString(left_x + 20*mm, y, "Tax (Total):")
     c.drawRightString(right_x, y, f"{total_tax:.2f}")
     y -= 5 * mm
     
-    # Discount
     if discount > 0:
         c.drawString(left_x + 20*mm, y, "Discount:")
         c.drawRightString(right_x, y, f"-{discount:.2f}")
@@ -441,19 +432,18 @@ def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None
     c.setFont("Helvetica-Bold", 14)
     c.drawString(left_x, y, "TOTAL:")
     c.drawRightString(right_x, y, f"Rs. {final_total:.2f}")
-    y -= 10 * mm
+    y -= 8 * mm 
     
     # --- FOOTER ---
     c.setFont("Helvetica-Oblique", 9)
     c.drawCentredString(mid_x, y, "Thank You for Visiting!")
-    y -= 4 * mm
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(mid_x, y, "Generated by HotelApp")
+    
+    # "Generated by HotelApp" line has been removed
     
     c.save()
     
-    # Print or Open
     try:
         os.startfile(filename)
     except:
-        pass # Linux/Mac support skipped for brevity
+        pass
+    

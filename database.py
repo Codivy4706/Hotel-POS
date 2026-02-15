@@ -15,38 +15,69 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;")
 
-    # 1. SETTINGS & INFO
-    cursor.execute('''CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY, value TEXT)''')
+    # 1. SETTINGS & USERS
+    cursor.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT)')
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO users (username, password, role) VALUES ('admin', '1234', 'ADMIN')")
 
-    # 2. USERS (Login System)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT)''')
+    # 2. CATEGORIES (Added this here so get_all_categories() works)
+    cursor.execute('CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE, tax_rate REAL)')
+    
+    # Optional: Seed default categories so categories list isn't empty
+    cursor.execute("SELECT COUNT(*) FROM categories")
+    if cursor.fetchone()[0] == 0:
+        cursor.executemany("INSERT INTO categories (name, tax_rate) VALUES (?, ?)", 
+                           [('FOOD', 5.0), ('DRINKS', 12.0), ('SNACKS', 5.0), ('DESSERT', 18.0)])
 
-    # 3. CATEGORIES (For Taxes)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY, name TEXT UNIQUE, tax_rate REAL)''')
-
-    # 4. ITEMS (With Multiple Prices)
+    # 3. ITEMS
     cursor.execute('''CREATE TABLE IF NOT EXISTS items (
-        id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER, 
-        price_dinein REAL, price_delivery REAL, image_path TEXT,
+        id INTEGER PRIMARY KEY, 
+        name TEXT, 
+        category TEXT, 
+        category_id INTEGER, 
+        price REAL, 
+        price_dinein REAL, 
+        price_delivery REAL, 
+        image_path TEXT,
+        tax_rate REAL,
         FOREIGN KEY(category_id) REFERENCES categories(id))''')
 
-    # 5. TABLES & ROOMS
-    cursor.execute('''CREATE TABLE IF NOT EXISTS dining_tables (
-        id INTEGER PRIMARY KEY, table_number TEXT UNIQUE, status TEXT DEFAULT 'AVAILABLE', current_total REAL DEFAULT 0)''')
+    # 4. ROOMS
     cursor.execute('''CREATE TABLE IF NOT EXISTS rooms (
-        id INTEGER PRIMARY KEY, room_number TEXT UNIQUE, type TEXT, status TEXT DEFAULT 'AVAILABLE')''')
+        room_number TEXT PRIMARY KEY,
+        room_type TEXT, 
+        price_per_night REAL,
+        status TEXT DEFAULT 'AVAILABLE')''')
 
-    # 6. ORDERS (Expanded)
+    # 5. TABLES
+    cursor.execute('''CREATE TABLE IF NOT EXISTS dining_tables (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        table_number TEXT UNIQUE, 
+        status TEXT DEFAULT "AVAILABLE")''')
+
+    # 6. ORDERS
     cursor.execute('''CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY, table_id INTEGER NULL, order_type TEXT, 
-        status TEXT DEFAULT 'OPEN', created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
-    
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        table_id INTEGER, 
+        room_number TEXT,
+        order_type TEXT, 
+        status TEXT DEFAULT "OPEN", 
+        order_date TEXT DEFAULT CURRENT_TIMESTAMP)''')
+
+    # 7. ORDER ITEMS 
     cursor.execute('''CREATE TABLE IF NOT EXISTS order_items (
-        id INTEGER PRIMARY KEY, order_id INTEGER, item_name TEXT, 
-        quantity INTEGER, unit_price REAL, tax_rate REAL, total_price REAL,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        order_id INTEGER, 
+        item_name TEXT, 
+        quantity INTEGER, 
+        unit_price REAL, 
+        tax_rate REAL, 
+        total_price REAL,
+        printed_qty INTEGER DEFAULT 0, 
+        notes TEXT,                     
         FOREIGN KEY(order_id) REFERENCES orders(id))''')
 
     conn.commit()
@@ -70,18 +101,18 @@ def seed_data():
     # 2. Insert Items (Matching the new schema: Name, Category, Price)
     # Note: The new DB uses 'category' as text (e.g., 'FOOD') instead of IDs
     items = [
-        ("Classic Burger", "FOOD", 150),
-        ("Cheese Pizza", "FOOD", 280),
-        ("Red Sauce Pasta", "FOOD", 220),
-        ("French Fries", "SNACKS", 90),
-        ("Coca Cola", "DRINKS", 60),
-        ("Cold Coffee", "DRINKS", 120),
-        ("Vanilla Scoop", "DESSERT", 80),
-        ("Brownie", "DESSERT", 150),
+        ("Classic Burger", "FOOD", 150, 150, 160, 0.0),
+        ("Cheese Pizza", "FOOD", 280, 280, 300, 5.0),
+        ("Red Sauce Pasta", "FOOD", 220, 220, 240, 5.0),
+        ("French Fries", "SNACKS", 90, 90, 100, 5.0),
+        ("Coca Cola", "DRINKS", 60, 60, 65, 0.0),
+        ("Cold Coffee", "DRINKS", 120, 120, 130, 12.0),
+        ("Vanilla Scoop", "DESSERT", 80, 80, 90, 18.0),
+        ("Brownie", "DESSERT", 150, 150, 165, 18.0),
     ]
     
     try:
-        cursor.executemany("INSERT INTO items (name, category, price) VALUES (?, ?, ?)", items)
+        cursor.executemany("INSERT INTO items (name, category, price, price_dinein, price_delivery, tax_rate) VALUES (?, ?, ?, ?, ?, ?)", items)
         conn.commit()
         print("✅ Data Seeded Successfully.")
     except Exception as e:
@@ -101,14 +132,19 @@ def get_menu_items(price_mode="DINE_IN"):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id, name, price_dinein, price_delivery, category, image_path, tax_rate FROM items")
+    query = """
+        SELECT i.id, i.name, i.price_dinein, i.price_delivery, 
+               c.name as category_name, i.image_path, i.tax_rate
+        FROM items i
+        LEFT JOIN categories c ON i.category_id = c.id
+    """
     
+    cursor.execute(query)
     data = cursor.fetchall()
     conn.close()
     
     menu_list = []
     for row in data:
-        # Determine Price based on mode
         final_price = row[3] if price_mode == "DELIVERY" else row[2]
 
         menu_list.append({
@@ -117,8 +153,8 @@ def get_menu_items(price_mode="DINE_IN"):
             "price": final_price,
             "category": row[4],
             "image": row[5] if row[5] else "",
-            
-            "tax_rate": row[6] if row[6] is not None else 5.0
+            # This now pulls the specific item tax you set in Menu Manager
+            "tax_rate": row[6] if row[6] is not None else 0.0 
         })
         
     return menu_list
@@ -299,15 +335,15 @@ def checkout_table(table_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute("UPDATE orders SET status='COMPLETED' WHERE table_id=? AND status='OPEN'", (table_id,))
-        
-        cursor.execute("UPDATE dining_tables SET status='AVAILABLE' WHERE id=?", (table_id,))
-        
+        t_id = int(table_id) # Ensure it's an integer for the query
+        cursor.execute("UPDATE orders SET status='COMPLETED' WHERE table_id=? AND status='OPEN'", (t_id,))
+        cursor.execute("UPDATE dining_tables SET status='AVAILABLE' WHERE id=?", (t_id,))
         conn.commit()
-        print(f"✅ Table {table_id} Checked Out & Order Closed.")
+        print(f"✅ Table {t_id} Checked Out & Order Closed.")
     except Exception as e:
         print(f"❌ Error checking out: {e}")
-    conn.close()
+    finally:
+        conn.close()
 
 def get_sales_history():
     """
@@ -412,28 +448,28 @@ def delete_category(cat_id):
     conn.commit()
     conn.close()
 
-def add_item(self):
-        name = self.inp_name.text()
-        try:
-            p_dine = float(self.inp_price_dine.text())
-            p_del = float(self.inp_price_delivery.text())
-            
-            # --- THE FIX: Capture the tax rate ---
-            # If you don't have an input field yet, use a default like 5.0
-            tax_rate = float(self.inp_tax.text()) if hasattr(self, 'inp_tax') else 5.0
-            
-        except ValueError:
-            QMessageBox.warning(self, "Error", "Invalid Price or Tax")
-            return
-
-        cat = self.combo_category.currentText()
-        img = self.image_path if hasattr(self, 'image_path') else ""
-
-        # --- UPDATED CALL: Now passing 6 arguments ---
-        database.add_item(name, p_dine, p_del, cat, img, tax_rate)
-        
-        QMessageBox.information(self, "Success", "Item Added!")
-        self.refresh_menu()
+# Added =5.0 to tax_rate to make it optional
+def add_item(name, p_dine, p_del, category_name, img_path, tax_rate=5.0):
+    """Inserts a new item into the items table based on GUI input."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    # 1. Get the category_id from the category_name
+    cursor.execute("SELECT id FROM categories WHERE name = ?", (category_name,))
+    row = cursor.fetchone()
+    cat_id = row[0] if row else None
+    
+    # 2. Insert into items table matching your schema
+    query = """
+        INSERT INTO items (name, category, category_id, price, price_dinein, price_delivery, image_path, tax_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    
+    # Values tuple now matches the 8 columns in your items table
+    cursor.execute(query, (name, category_name, cat_id, p_dine, p_dine, p_del, img_path, tax_rate))
+    
+    conn.commit()
+    conn.close()
 
 def delete_item(item_id):
     conn = sqlite3.connect(DB_NAME)
@@ -533,29 +569,23 @@ def get_all_rooms():
     return data
 
 def get_all_tables():
-    """
-    Fetches tables with Status AND Total Bill Amount.
-    """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    # We join tables with OPEN orders to calculate the live total
     query = """
         SELECT 
-            t.id, 
-            t.status, 
-            COALESCE(SUM(oi.total_price), 0) as total_due
+            t.table_number,               -- index 0 (String for GUI list/buttons)
+            t.status,                     -- index 1
+            COALESCE(SUM(oi.total_price), 0), -- index 2
+            t.id                          -- index 3 (Integer for save_order logic)
         FROM dining_tables t
         LEFT JOIN orders o ON t.id = o.table_id AND o.status = 'OPEN'
         LEFT JOIN order_items oi ON o.id = oi.order_id
         GROUP BY t.id
     """
-    
     cursor.execute(query)
     data = cursor.fetchall()
     conn.close()
-    return data 
-    # Returns: [(1, 'OCCUPIED', 500.0), (2, 'AVAILABLE', 0.0)]
+    return data
 
 def check_in_guest(room_num, name, phone):
     conn = sqlite3.connect(DB_NAME)
@@ -612,57 +642,6 @@ def checkout_room_orders(room_num):
     conn.commit()
     conn.close()
 
-def get_daily_report(date_str):
-    """
-    Returns Sales Data for a specific date (YYYY-MM-DD).
-    Returns: { 'food': 0.0, 'rooms': 0.0, 'halls': 0.0, 'total': 0.0 }
-    """
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    report = {'food': 0.0, 'rooms': 0.0, 'halls': 0.0, 'total': 0.0}
-    
-    # 1. Food Sales (Sum of items in orders from that date)
-    # We join orders items -> orders to filter by date
-    cursor.execute("""
-        SELECT COALESCE(SUM(oi.total_price), 0)
-        FROM order_items oi
-        JOIN orders o ON oi.order_id = o.id
-        WHERE o.order_date = ?
-    """, (date_str,))
-    report['food'] = cursor.fetchone()[0]
-    
-    # 2. Room Sales (Rooms booked on this date)
-    # Note: This is simplified. Real systems split revenue across nights.
-    # We will just count new check-ins for now.
-    cursor.execute("""
-        SELECT COUNT(*) FROM bookings WHERE check_in_date LIKE ?
-    """, (f"{date_str}%",))
-    # We need average price to estimate, or sum actuals if we stored them.
-    # Let's approximate using an average of ₹1500 for now, or fetch room prices
-    # Better logic: Fetch actual room prices for these bookings
-    cursor.execute("""
-        SELECT COALESCE(SUM(r.price_per_night), 0)
-        FROM bookings b
-        JOIN rooms r ON b.room_number = r.room_number
-        WHERE b.check_in_date LIKE ?
-    """, (f"{date_str}%",))
-    report['rooms'] = cursor.fetchone()[0]
-    
-    # 3. Hall Sales (Events on this date)
-    # We need to query the halls database. 
-    # Since halls are in the same file 'hotel_restaurant.db', we can query 'hall_bookings'
-    try:
-        cursor.execute("SELECT COALESCE(SUM(total_price), 0) FROM hall_bookings WHERE event_date = ?", (date_str,))
-        report['halls'] = cursor.fetchone()[0]
-    except:
-        report['halls'] = 0.0 # Table might not exist yet if phase 3 skipped
-        
-    report['total'] = report['food'] + report['rooms'] + report['halls']
-    
-    conn.close()
-    return report
-
 def get_room_order_items(room_num):
     """Fetches the list of all food items ordered by this room."""
     conn = sqlite3.connect(DB_NAME)
@@ -702,12 +681,16 @@ def add_custom_table(name):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO dining_tables (id, status) VALUES (?, 'AVAILABLE')", (name,))
+        # We insert into 'table_number' (the string column) 
+        # and let 'id' auto-increment itself.
+        cursor.execute("INSERT INTO dining_tables (table_number, status) VALUES (?, 'AVAILABLE')", (name,))
         conn.commit()
         success = True
-    except:
+    except Exception as e:
+        print(f"Error adding table: {e}")
         success = False
-    conn.close()
+    finally:
+        conn.close()
     return success
 
 def delete_table(name):
@@ -742,8 +725,35 @@ def delete_room(r_num):
 def get_all_items():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, price_dinein, price_delivery, category, image_path, tax_rate FROM items") 
+    cursor.execute("SELECT id, name, price_dinein, price_delivery, category, image_path, tax_rate FROM items")
     data = cursor.fetchall()
     conn.close()
     return data
+
+def get_daily_report(date_str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    report = {'food': 0.0, 'rooms': 0.0, 'halls': 0.0, 'total': 0.0}
+    
+    # Matches your orders table column 'order_date'
+    cursor.execute("""
+        SELECT COALESCE(SUM(oi.total_price), 0)
+        FROM order_items oi
+        JOIN orders o ON oi.order_id = o.id
+        WHERE o.order_date = ?
+    """, (date_str,))
+    report['food'] = cursor.fetchone()[0]
+    
+    # Matches your rooms table column 'price_per_night'
+    cursor.execute("""
+        SELECT COALESCE(SUM(r.price_per_night), 0)
+        FROM bookings b
+        JOIN rooms r ON b.room_number = r.room_number
+        WHERE b.check_in_date LIKE ?
+    """, (f"{date_str}%",))
+    report['rooms'] = cursor.fetchone()[0]
+    
+    report['total'] = report['food'] + report['rooms']
+    conn.close()
+    return report
 
