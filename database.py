@@ -1,6 +1,5 @@
 import sqlite3
 import datetime
-import database
 from PyQt6.QtWidgets import QMessageBox
 today = datetime.date.today().strftime("%Y-%m-%d")
 
@@ -24,13 +23,11 @@ def init_db():
         cursor.execute("INSERT INTO users (username, password, role) VALUES ('admin', '1234', 'ADMIN')")
 
     # 2. CATEGORIES (Added this here so get_all_categories() works)
-    cursor.execute('CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE, tax_rate REAL)')
-    
-    # Optional: Seed default categories so categories list isn't empty
+    cursor.execute('CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, tax_rate REAL Default 5.0)')
     cursor.execute("SELECT COUNT(*) FROM categories")
     if cursor.fetchone()[0] == 0:
         cursor.executemany("INSERT INTO categories (name, tax_rate) VALUES (?, ?)", 
-                           [('FOOD', 5.0), ('DRINKS', 12.0), ('SNACKS', 5.0), ('DESSERT', 18.0)])
+                           [('FOOD', 0.0), ('DRINKS', 12.0), ('SNACKS', 5.0), ('DESSERT', 18.0)])
 
     # 3. ITEMS
     cursor.execute('''CREATE TABLE IF NOT EXISTS items (
@@ -64,9 +61,12 @@ def init_db():
         table_id INTEGER, 
         room_number TEXT,
         order_type TEXT, 
+        customer_name TEXT,     
+        customer_phone TEXT,    
+        customer_address TEXT,  
         status TEXT DEFAULT "OPEN", 
         order_date TEXT DEFAULT CURRENT_TIMESTAMP)''')
-
+    
     # 7. ORDER ITEMS 
     cursor.execute('''CREATE TABLE IF NOT EXISTS order_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -132,6 +132,7 @@ def get_menu_items(price_mode="DINE_IN"):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
+    # Selecting image_path explicitly
     query = """
         SELECT i.id, i.name, i.price_dinein, i.price_delivery, 
                c.name as category_name, i.image_path, i.tax_rate
@@ -151,9 +152,8 @@ def get_menu_items(price_mode="DINE_IN"):
             "id": row[0],
             "name": row[1],
             "price": final_price,
-            "category": row[4],
-            "image": row[5] if row[5] else "",
-            # This now pulls the specific item tax you set in Menu Manager
+            "category": row[4], # Fixed: UI looks for 'category'
+            "image": row[5] if row[5] else "", # Matches your existing 'image' key
             "tax_rate": row[6] if row[6] is not None else 0.0 
         })
         
@@ -236,10 +236,29 @@ def get_all_tables():
     return data 
     # Returns list of tuples: [(1, 'OCCUPIED', 500.0), (2, 'AVAILABLE', 0.0), ...]
 
+# --- PASTE THIS IN database.py ---
+
+def get_all_items():
+    conn = sqlite3.connect("hotel_restaurant.db") 
+    cursor = conn.cursor()
+    
+    # Joining with categories so your Admin table shows the Category Name instead of a number
+    query = """
+        SELECT i.id, i.name, i.price_dinein, i.price_delivery, 
+               c.name as category_name, i.image_path, i.tax_rate
+        FROM items i
+        LEFT JOIN categories c ON i.category_id = c.id
+    """
+    
+    cursor.execute(query)
+    data = cursor.fetchall()
+    conn.close()
+    
+    return data
+
 # --- SETTINGS & CONFIGURATION HELPERS ---
 
 def get_setting(key, default=""):
-    """Fetch a specific setting (e.g., 'restaurant_name')."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
@@ -248,7 +267,6 @@ def get_setting(key, default=""):
     return res[0] if res else default
 
 def save_setting(key, value):
-    """Save or update a setting."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -406,28 +424,33 @@ def save_delivery_order(cart_items, name, phone, address):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Create Order
-    cursor.execute("""
-        INSERT INTO orders (order_type, status, customer_name, customer_phone, customer_address) 
-        VALUES ('DELIVERY', 'CLOSED', ?, ?, ?)
-    """, (name, phone, address))
-    
-    order_id = cursor.lastrowid
-    
-    # 2. Insert Items
-    for item in cart_items:
-        total = item['price'] * item['qty']
-        
-        tax_rate = item.get('tax_rate', 5.0) 
-        
+    try:
+        # 1. Create Order - Now matches the updated schema above
         cursor.execute("""
-            INSERT INTO order_items (order_id, item_name, quantity, unit_price, tax_rate, total_price)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (order_id, item['name'], item['qty'], item['price'], tax_rate, total))
+            INSERT INTO orders (order_type, status, customer_name, customer_phone, customer_address) 
+            VALUES ('DELIVERY', 'CLOSED', ?, ?, ?)
+        """, (name, phone, address))
         
-    conn.commit()
-    conn.close()
-    return order_id
+        order_id = cursor.lastrowid
+        
+        # 2. Insert Items
+        for item in cart_items:
+            total = item['price'] * item['qty']
+            tax_rate = item.get('tax_rate', 5.0) 
+            
+            cursor.execute("""
+                INSERT INTO order_items (order_id, item_name, quantity, unit_price, tax_rate, total_price)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (order_id, item['name'], item['qty'], item['price'], tax_rate, total))
+            
+        conn.commit()
+        return order_id
+    except Exception as e:
+        print(f"Error saving delivery: {e}")
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
 
 def add_category(name, tax_rate):
     conn = sqlite3.connect(DB_NAME)
@@ -448,7 +471,6 @@ def delete_category(cat_id):
     conn.commit()
     conn.close()
 
-# Added =5.0 to tax_rate to make it optional
 def add_item(name, p_dine, p_del, category_name, img_path, tax_rate=5.0):
     """Inserts a new item into the items table based on GUI input."""
     conn = sqlite3.connect(DB_NAME)
@@ -660,21 +682,18 @@ def get_room_order_items(room_num):
     conn.close()
     return data
 
-# --- SETTINGS MANAGEMENT ---
-def get_setting(key, default=""):
+def get_active_booking_details(room_num):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
-    row = cursor.fetchone()
+    query = """
+        SELECT guest_name, guest_phone, check_in_date 
+        FROM bookings 
+        WHERE room_number = ? AND status = 'ACTIVE'
+    """
+    cursor.execute(query, (room_num,))
+    res = cursor.fetchone()
     conn.close()
-    return row[0] if row else default
-
-def save_setting(key, value):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
+    return res 
 
 # --- TABLE MANAGEMENT ---
 def add_custom_table(name):
@@ -720,15 +739,56 @@ def delete_room(r_num):
     conn.commit()
     conn.close()
 
-# --- ADMIN HELPERS ---
-
-def get_all_items():
+def get_menu_items(price_mode="DINE_IN"):
+    """
+    Returns menu items as DICTIONARIES so the POS doesn't crash.
+    """
     conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row  # <--- CRITICAL: Enables item['name'] access
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, price_dinein, price_delivery, category, image_path, tax_rate FROM items")
+    
+    query = """
+        SELECT i.id, i.name, i.price_dinein, i.price_delivery, 
+               c.name as category_name, i.image_path, i.tax_rate
+        FROM items i
+        LEFT JOIN categories c ON i.category_id = c.id
+    """
+    
+    cursor.execute(query)
     data = cursor.fetchall()
     conn.close()
-    return data
+    
+    menu_list = []
+    for row in data:
+        # Select price based on mode
+        final_price = row['price_delivery'] if price_mode == "DELIVERY" else row['price_dinein']
+
+        menu_list.append({
+            "id": row['id'],
+            "name": row['name'],
+            "price": final_price,
+            "category": row['category_name'] if row['category_name'] else "Uncategorized", 
+            "image": row['image_path'] if row['image_path'] else "", 
+            "tax_rate": row['tax_rate'] if row['tax_rate'] else 0.0
+        })
+        
+    return menu_list
+
+def add_item(name, category_id, price_dine, price_del, image_path, tax_rate=5.0):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO items (name, category_id, price_dinein, price_delivery, image_path, tax_rate)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (name, category_id, price_dine, price_del, image_path, tax_rate))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return False
+    finally:
+        conn.close()
 
 def get_daily_report(date_str):
     conn = sqlite3.connect(DB_NAME)

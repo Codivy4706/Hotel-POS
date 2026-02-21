@@ -4,7 +4,7 @@ from reportlab.lib.pagesizes import A4
 import datetime
 import os
 import subprocess
-import database
+import database as database
 
 def num_to_words(num):
     """Converts a number to words (Simplified for common currency)."""
@@ -31,16 +31,20 @@ def num_to_words(num):
     return str(num)
 
 def generate_room_bill(room_num, guest_data, food_items, room_price, payment_mode):
-    """
-    Generates a Professional Tax Invoice.
-    guest_data: (name, phone, check_in_date_str, address)
-    food_items: [(name, qty, unit_price, total), ...]
-    """
+    # --- 1. FETCH DYNAMIC INFO (Replacing hardcoded strings) ---
+    hotel_name = database.get_setting("hotel_name", "GRAND HOTEL & SUITES")
+    hotel_addr = database.get_setting("hotel_address", "123, Hospitality Lane, City Center")
+    gstin = database.get_setting("hotel_gst", "27AAAAA0000A1Z5")
+    hotel_ph = database.get_setting("hotel_phone", "9876543210")
+
     # --- DATA PREP ---
     booking_id = f"{datetime.datetime.now().strftime('%y%m%d')}{room_num}"
     invoice_no = f"INV-{booking_id}"
     
-    check_in_str = guest_data[2] if len(guest_data) > 2 else "N/A"
+    # guest_data structure: (name, phone, check_in_date)
+    check_in_str = guest_data[2] if len(guest_data) > 2 and guest_data[2] else "N/A"
+    guest_phone = guest_data[1] if len(guest_data) > 1 and guest_data[1] else "N/A"
+    
     check_out_dt = datetime.datetime.now()
     check_out_str = check_out_dt.strftime("%Y-%m-%d %H:%M")
     
@@ -52,23 +56,21 @@ def generate_room_bill(room_num, guest_data, food_items, room_price, payment_mod
     except:
         days = 1
         
-    gstin = "27AAAAA0000A1Z5" # Replace with your GSTIN
-    
     # --- PDF SETUP ---
     filename = f"Invoice_{room_num}_{booking_id}.pdf"
     c = canvas.Canvas(filename, pagesize=A4)
     width, height = A4
     
-    # --- HEADER ---
+    # --- HEADER (Now using get_setting) ---
     y = height - 20
     c.setFont("Helvetica-Bold", 20)
-    c.drawCentredString(width/2, y, "GRAND HOTEL & SUITES")
+    c.drawCentredString(width/2, y, hotel_name) # Dynamic
     y -= 20
     
     c.setFont("Helvetica", 10)
-    c.drawCentredString(width/2, y, "123, Hospitality Lane, City Center")
+    c.drawCentredString(width/2, y, hotel_addr) # Dynamic
     y -= 12
-    c.drawCentredString(width/2, y, f"GSTIN: {gstin} | Phone: 9876543210")
+    c.drawCentredString(width/2, y, f"GSTIN: {gstin} | Phone: {hotel_ph}") # Dynamic
     y -= 20
     c.line(20, y, width-20, y)
     y -= 20
@@ -86,12 +88,12 @@ def generate_room_bill(room_num, guest_data, food_items, room_price, payment_mod
     c.drawRightString(width-20, y, f"Payment Mode: {payment_mode}")
     
     # Guest Details
-    y += 24 
+    y += 24
     c.drawString(20, y-15, f"Guest Name: {guest_data[0]}")
-    c.drawString(20, y-27, f"Phone: {guest_data[1]}")
+    c.drawString(20, y-27, f"Phone: {guest_phone}") # Fixed
     
     c.drawCentredString(width/2, y-15, f"Room No: {room_num}")
-    c.drawCentredString(width/2, y-27, f"Check-In: {check_in_str}")
+    c.drawCentredString(width/2, y-27, f"Check-In: {check_in_str}") # Fixed
     c.drawCentredString(width/2, y-39, f"Check-Out: {check_out_str}")
     
     y -= 60
@@ -130,19 +132,15 @@ def generate_room_bill(room_num, guest_data, food_items, room_price, payment_mod
         c.setFont("Helvetica", 9)
         
         for item in food_items:
-            name = item[0]
-            qty = item[1]
-            rate = item[2]
-            line_tot = item[3]
-            
-            c.drawString(40, y, name[:35]) 
+            name, qty, rate, line_tot = item[0], item[1], item[2], item[3]
+            c.drawString(40, y, name[:35])
             c.drawString(250, y, f"{rate:.2f}")
             c.drawString(330, y, str(qty))
             c.drawRightString(width-30, y, f"{line_tot:.2f}")
             y -= 12
             total_amount += line_tot
             
-            if y < 100: # Page Break
+            if y < 100:
                 c.showPage()
                 y = height - 50
     
@@ -152,8 +150,7 @@ def generate_room_bill(room_num, guest_data, food_items, room_price, payment_mod
     
     # --- TOTALS ---
     subtotal = total_amount
-    cgst = subtotal * 0.09
-    sgst = subtotal * 0.09
+    cgst, sgst = subtotal * 0.09, subtotal * 0.09
     grand_total = subtotal + cgst + sgst
     
     c.setFont("Helvetica", 10)
@@ -194,32 +191,23 @@ def generate_room_bill(room_num, guest_data, food_items, room_price, payment_mod
     
     c.save()
     print_file(filename)
-
-def generate_kot(table_num, cart_items):
-    """
-    Generates a Professional KOT with dynamic height (No extra whitespace).
-    """
-    import os
     
+def generate_kot(table_num, cart_items):
     timestamp = datetime.datetime.now().strftime("%H%M%S")
+    # Clean label for the ID
     kot_id = f"KOT-{str(table_num).replace(' ', '')}-{timestamp[-4:]}"
     filename = f"KOT_{str(table_num).replace(' ', '_')}_{timestamp}.pdf"
     
     # --- 1. CALCULATE EXACT HEIGHT ---
-    # Header (Title + Table + Time) needs about 45mm
-    # Footer needs about 10mm
-    # Each Item needs roughly 15-25mm depending on notes
-    
-    header_height = 45 
-    footer_height = 10
+    header_height = 42
+    footer_height = 4 
     list_height = 0
     
     for item in cart_items:
-        list_height += 12  # Space for Item Name
+        list_height += 5   
         if item.get('note'):
-            list_height += 8 # Space for Note
-        list_height += 5   # Space for Separator Line
-        list_height += 5   # Extra padding
+            list_height += 4
+        list_height += 4   
         
     total_height = header_height + list_height + footer_height
     
@@ -229,7 +217,7 @@ def generate_kot(table_num, cart_items):
     c = canvas.Canvas(filename, pagesize=(width, height))
     
     # Start drawing from top
-    y = height - 10 * mm
+    y = height - 8 * mm
     mid_x = width / 2
     
     # --- 2. HEADER ---
@@ -244,21 +232,21 @@ def generate_kot(table_num, cart_items):
     y -= 12 * mm
     
     dt = datetime.datetime.now().strftime("%d-%b %H:%M")
-    c.setFont("Helvetica", 10)
+    c.setFont("Helvetica", 9) # Smaller font to save height
     c.drawCentredString(mid_x, y, f"Time: {dt}")
-    y -= 5 * mm
+    y -= 4 * mm
     c.drawCentredString(mid_x, y, f"ID: {kot_id}")
     y -= 5 * mm
     
-    c.setLineWidth(1.5)
+    c.setLineWidth(1)
     c.line(0, y, width, y)
     y -= 5 * mm
     
     # --- 3. ITEMS ---
-    c.setFont("Helvetica-Bold", 11)
+    c.setFont("Helvetica-Bold", 10)
     c.drawString(2*mm, y, "QTY")
     c.drawString(15*mm, y, "ITEM")
-    y -= 6 * mm
+    y -= 5 * mm
     
     for item in cart_items:
         qty = item['qty']
@@ -266,25 +254,25 @@ def generate_kot(table_num, cart_items):
         note = item.get('note', '')
         
         # Item Line
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Helvetica-Bold", 13)
         c.drawString(2*mm, y, str(qty))
         c.drawString(15*mm, y, name[:22])
-        y -= 6 * mm
+        y -= 5 * mm
         
         # Note Line
         if note:
-            c.setFont("Helvetica-Oblique", 10)
+            c.setFont("Helvetica-Oblique", 9)
             c.drawString(15*mm, y, f"* {note}")
-            y -= 5 * mm
+            y -= 4 * mm
             
         # Dashed Separator
         c.setLineWidth(0.5)
         c.setDash(2, 2)
         c.line(2*mm, y, width-2*mm, y)
-        c.setDash([]) # Reset
-        y -= 5 * mm # Gap before next item
+        c.setDash([]) 
+        y -= 4 * mm 
 
-    # --- 4. FOOTER ---
+    # --- 4. FOOTER (Final Cut Line) ---
     y = 2 * mm
     c.setLineWidth(1)
     c.line(0, y, width, y)
@@ -304,10 +292,7 @@ def print_file(filename):
     except Exception as e:
         print(f"Error opening Edge: {e}")
 
-def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None):
-    """
-    Generates a Standard Bill with a dynamic height to minimize thermal paper waste.
-    """
+def generate_bill(order_type, table_num, cart_items, total_amount, discount=0, customer=None):
     import os
     import datetime
     from reportlab.lib.units import mm
@@ -349,7 +334,13 @@ def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None
     
     # --- INFO ---
     c.setFont("Helvetica-Bold", 11)
-    label = f"TABLE {table_num}" if str(table_num).isdigit() else str(table_num)
+    if order_type == "ROOM_SERVICE":
+        label = f"ROOM: {table_num}"
+    elif order_type == "DINE_IN":
+        label = f"TABLE: {table_num}"
+    else:
+        label = f"TYPE: {order_type} ({table_num})"
+        
     c.drawString(left_x, y, f"Order: {label}")
     
     c.setFont("Helvetica", 9)
@@ -446,4 +437,3 @@ def generate_bill(table_num, cart_items, total_amount, discount=0, customer=None
         os.startfile(filename)
     except:
         pass
-    

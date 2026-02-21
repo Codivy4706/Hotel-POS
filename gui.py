@@ -1,8 +1,8 @@
 from PyQt6.QtCore import Qt, QSize, QTimer 
-from PyQt6.QtGui import QIcon, QFont, QColor
+from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QGridLayout, QMessageBox, QDialog, QWidget,
+    QPushButton, QLabel, QGridLayout, QMessageBox, QDialog, QWidget, QGroupBox,
     QScrollArea, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog,
     QHeaderView, QTabWidget, QFormLayout, QTextEdit, QFrame, QGraphicsDropShadowEffect,
     QCheckBox, QInputDialog, QListWidget, QStackedWidget, QToolButton, QAbstractItemView
@@ -292,29 +292,52 @@ class SettingsWindow(QDialog):
             self.load_menu_data()
 
     def add_item(self):
-        name = self.inp_item_name.text()
+        """Adds item to DB and triggers a global refresh in all tabs."""
+        name = self.inp_name.text() # Assumed variable name from your previous context
+        
+        # Logic to handle price input (cleaner)
         p_dine = self.inp_price_dine.text()
         p_del = self.inp_price_del.text()
         
-        if not name or not p_dine: return
-        if not p_del: p_del = p_dine # Default delivery to same as dine-in
+        if not name or not p_dine: 
+            return
+        if not p_del: 
+            p_del = p_dine 
         
-        cat_idx = self.combo_cat.currentIndex()
+        # Get Category ID safely
+        cat_idx = self.inp_cat.currentIndex()
         if cat_idx == -1: return
-        cat_id = self.combo_cat.itemData(cat_idx)
+        cat_id = self.inp_cat.itemData(cat_idx) # Ensure you set itemData when populating!
         
         try:
-            # Save with both prices and empty image path
-            database.add_item(name, cat_id, float(p_dine), float(p_del), "")
+            # 1. Save to Database
+            # We use 0.0 for tax if input is empty
+            tax_val = float(self.inp_tax.text()) if self.inp_tax.text() else 5.0
             
-            self.inp_item_name.clear()
+            # Using the image path from the input field
+            img_path = self.inp_image.text()
+            
+            database.add_item(name, cat_id, float(p_dine), float(p_del), img_path, tax_val)
+            
+            # 2. Clear Inputs
+            self.inp_name.clear()
             self.inp_price_dine.clear()
             self.inp_price_del.clear()
-            self.load_menu_data()
-            QMessageBox.information(self, "Success", "Item Added!")
+            self.inp_image.clear()
+            
+            # 3. Refresh Admin Table
+            self.refresh_all_data()
+            
+            # 4. GLOBAL SYNC: The missing link!
+            # This finds the Main Window and tells it to update Takeaway/Delivery tabs
+            if self.window() and hasattr(self.window(), 'sync_all_pos_menus'):
+                self.window().sync_all_pos_menus()
+                
+            QMessageBox.information(self, "Success", f"{name} added and synced to all tabs!")
+            
         except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
-
+            
     def del_item(self):
         row = self.item_list.currentRow()
         if row >= 0:
@@ -508,7 +531,7 @@ class RoomsTab(QWidget):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
-        # 1. TOP HEADER (Identical to Tables Tab)
+        # 1. TOP HEADER (Matches DineInTab style)
         top_row = QHBoxLayout()
         lbl = QLabel("HOTEL ROOMS")
         lbl.setFont(QFont("Arial", 14, QFont.Weight.Bold))
@@ -522,12 +545,13 @@ class RoomsTab(QWidget):
         top_row.addWidget(btn_refresh)
         self.layout.addLayout(top_row)
 
-        # 2. SCROLLABLE GRID CONTAINER
+        # 2. SCROLLABLE GRID (Matches DineInTab background)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border: none; background-color: transparent;")
+        scroll.setStyleSheet("border: none; background-color: #f5f6f7;") 
         
         self.container = QWidget()
+        self.container.setStyleSheet("background-color: #f5f6f7;")
         self.grid_layout = QGridLayout()
         self.container.setLayout(self.grid_layout)
         
@@ -538,51 +562,56 @@ class RoomsTab(QWidget):
         self.refresh_rooms()
 
     def refresh_rooms(self):
-        """Redraws the grid while keeping all your database logic."""
-        # Clear existing buttons
+        """Clears and redraws the Room grid using Table Book styles."""
+        # Clear existing buttons safely
         for i in reversed(range(self.grid_layout.count())): 
             widget = self.grid_layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
             
-        rooms = database.get_all_rooms() # (num, type, price, status, guest_name)
+        # Data: (room_num, type, price, status, guest_name)
+        rooms = database.get_all_rooms() 
         
         row, col = 0, 0
         for r_num, r_type, price, status, guest in rooms:
             
-            # Color & Text Logic from your original code
+            # Formatting Text & Colors based on Table Tab Logic
             if status == "AVAILABLE":
                 color = "#66BB6A" # Material Green
-                hover = "#388E3C"
-                text = f"Room {r_num}\n{r_type}\n₹{int(price)}/night\n\nAVAILABLE"
+                hover_color = "#388E3C"
+                shadow_color = QColor(102, 187, 106, 80)
+                btn_text = f"Room {r_num}\n{r_type}\n₹{int(price)}/night\n\nAVAILABLE"
             else:
                 color = "#EF5350" # Material Red
-                hover = "#D32F2F"
-                text = f"Room {r_num}\n{guest}\n\nOCCUPIED"
+                hover_color = "#D32F2F"
+                shadow_color = QColor(239, 83, 80, 80)
+                # Show guest name on red buttons for better UX
+                btn_text = f"Room {r_num}\n{guest}\n\nOCCUPIED"
 
-            btn = QPushButton(text)
+            btn = QPushButton(btn_text)
             btn.setFixedSize(190, 140)
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {color}; color: white; border-radius: 12px;
-                    font-weight: bold; font-size: 13px; border: none;
+                    font-weight: bold; font-size: 13px; border: none; text-align: center;
                 }}
-                QPushButton:hover {{ background-color: {hover}; }}
+                QPushButton:hover {{ background-color: {hover_color}; }}
             """)
 
-            # Add the "Floating" shadow effect
+            # Apply identical shadow effect from DineInTab
             shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(10)
+            shadow.setBlurRadius(12)
+            shadow.setXOffset(0)
             shadow.setYOffset(4)
-            shadow.setColor(QColor(0, 0, 0, 50))
+            shadow.setColor(shadow_color)
             btn.setGraphicsEffect(shadow)
 
-            # --- RESTORED: Your handle_room_click logic ---
+            # Click Handlers
             btn.clicked.connect(lambda ch, x=r_num, s=status: self.handle_room_click(x, s))
             
             self.grid_layout.addWidget(btn, row, col)
             col += 1
-            if col > 3: 
+            if col > 3: # 4 columns like your table grid
                 col = 0
                 row += 1
 
@@ -632,29 +661,38 @@ class RoomsTab(QWidget):
             self.process_checkout(room_num)
 
     def open_room_service(self, room_num):
-        self.room_pos = POSInterface("ROOM_SERVICE", table_num=room_num, tab_ref=self)
-        self.room_pos.setWindowTitle(f"Room Service - Room {room_num}")
-        self.room_pos.resize(1250, 700) 
-        self.room_pos.setWindowFlags(Qt.WindowType.Window) 
-        self.room_pos.show()
+        self.dlg = POSInterface("ROOM_SERVICE", table_num=room_num, tab_ref=self)
+        self.dlg.setWindowTitle(f"Room Service - Room {room_num}")
+        self.dlg.resize(1250, 700) 
+        self.dlg.setWindowFlags(Qt.WindowType.Window) 
+        self.dlg.show()
 
     def process_checkout(self, room_num):
-        # 1. Gather Room & Guest Data
+        # 1. Gather Room Data for pricing
         room_data = database.get_all_rooms()
-        price_per_night, guest_name = 0, "Guest"
+        price_per_night = 0
         for r in room_data:
             if str(r[0]) == str(room_num):
-                price_per_night, guest_name = r[2], r[4]
+                price_per_night = r[2]
                 break
         
-        # 2. Get Food Total
+        # 2. FIX: Fetch full Guest Details (Name, Phone, Check-in)
+        guest_details = database.get_active_booking_details(room_num)
+        if not guest_details:
+            QMessageBox.warning(self, "Error", "No active booking found for this room!")
+            return
+            
+        guest_name, guest_phone, check_in_date = guest_details
+        
+        # 3. Get Food Total
         food_items = database.get_room_order_items(room_num)
         food_total = sum(item[3] for item in food_items)
         
-        # 3. Checkout Dialog
+        # 4. Checkout Dialog
         dlg = QDialog(self)
         dlg.setWindowTitle("Checkout & Payment")
         v_layout = QVBoxLayout(dlg)
+        v_layout.addWidget(QLabel(f"<b>Guest:</b> {guest_name}"))
         v_layout.addWidget(QLabel(f"Room Charges: ₹{price_per_night}"))
         v_layout.addWidget(QLabel(f"Food Charges: ₹{food_total}"))
         v_layout.addWidget(QLabel(f"<b>Total: ₹{price_per_night + food_total}</b>"))
@@ -670,8 +708,16 @@ class RoomsTab(QWidget):
         v_layout.addWidget(btn_pay)
         
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            # 4. Finalize
-            printer.generate_room_bill(room_num, (guest_name, ""), food_items, price_per_night, combo_pay.currentText())
+            # 5. Finalize: Passing the full guest_details tuple now!
+            printer.generate_room_bill(
+                room_num, 
+                guest_details, 
+                food_items, 
+                price_per_night, 
+                combo_pay.currentText()
+            )
+            
+            # Cleanup database
             database.checkout_room_orders(room_num)
             database.check_out_guest(room_num)
             self.refresh_rooms()
@@ -995,67 +1041,93 @@ class SettingsTab(QWidget):
         elif ok:
              QMessageBox.warning(self, "Error", "Incorrect Password")
 
-# --- REPLACE ENTIRE CLASS IN gui.py ---
 class MenuManager(QWidget):
     def __init__(self):
         super().__init__()
         self.layout = QHBoxLayout()
         self.setLayout(self.layout)
         
-        # --- LEFT: Add New Item Form ---
-        left_frame = QFrame()
-        left_layout = QFormLayout()
-        left_frame.setLayout(left_layout)
-        
-        # 1. Name & Category
-        self.inp_name = QLineEdit()
-        self.inp_cat = QComboBox()
-        self.inp_cat.addItems(["FOOD", "DRINKS", "DESSERT", "SNACKS", "ALCOHOL"])
-        self.inp_cat.currentTextChanged.connect(self.auto_set_tax) # Auto-fill tax on change
-        
-        # 2. Tax Rate Input (FIXED: Defined before adding to row)
-        self.inp_tax = QLineEdit()
-        self.inp_tax.setPlaceholderText("5.0")
-        self.inp_tax.setText("5.0") # Default value
-        
-        # 3. Dual Pricing Inputs
-        self.inp_price_dine = QLineEdit()
-        self.inp_price_dine.setPlaceholderText("e.g. 100")
-        
-        self.inp_price_del = QLineEdit()
-        self.inp_price_del.setPlaceholderText("e.g. 120")
+        # --- LEFT: Management Area ---
+        left_container = QFrame()
+        left_vbox = QVBoxLayout()
+        left_container.setLayout(left_vbox)
 
-        # 4. Image Inputs
+        # A. CATEGORY MANAGER 
+        cat_group = QGroupBox("Category Management")
+        cat_vbox = QVBoxLayout()
+        cat_group.setLayout(cat_vbox)
+
+        self.cat_table = QTableWidget()
+        self.cat_table.setColumnCount(3)
+        self.cat_table.setHorizontalHeaderLabels(["ID", "Name", "Tax %"])
+        self.cat_table.setFixedHeight(180) # Compact height
+        self.cat_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        
+        # --- SELECTION STYLE FOR CATEGORY TABLE ---
+        self.cat_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.cat_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.cat_table.setStyleSheet("""
+            QTableWidget::item:selected {
+                background-color: #bdc3c7; 
+                color: black;
+            }
+        """)
+        
+        cat_vbox.addWidget(self.cat_table)
+
+        cat_input_row = QHBoxLayout()
+        self.inp_new_cat = QLineEdit(); self.inp_new_cat.setPlaceholderText("New Category Name")
+        self.inp_new_tax = QLineEdit("5.0"); self.inp_new_tax.setFixedWidth(50)
+        btn_add_cat = QPushButton("➕")
+        btn_add_cat.clicked.connect(self.add_category_logic)
+        
+        cat_input_row.addWidget(self.inp_new_cat)
+        cat_input_row.addWidget(self.inp_new_tax)
+        cat_input_row.addWidget(btn_add_cat)
+        cat_vbox.addLayout(cat_input_row)
+
+        btn_del_cat = QPushButton("🗑️ Delete Category")
+        btn_del_cat.setStyleSheet("color: #c0392b; font-weight: bold;")
+        btn_del_cat.clicked.connect(self.delete_category_logic)
+        cat_vbox.addWidget(btn_del_cat)
+        left_vbox.addWidget(cat_group)
+
+        # B. ITEM FORM (Your existing form)
+        item_group = QGroupBox("Item Details")
+        left_layout = QFormLayout()
+        item_group.setLayout(left_layout)
+        
+        self.inp_name = QLineEdit()
+        self.inp_cat = QComboBox() # Now dynamically populated from the DB
+        self.inp_cat.currentTextChanged.connect(self.auto_set_tax)
+        
+        self.inp_tax = QLineEdit("5.0")
+        self.inp_price_dine = QLineEdit()
+        self.inp_price_del = QLineEdit()
         self.inp_image = QLineEdit()
-        self.inp_image.setPlaceholderText("Image Path...")
         
         btn_browse = QPushButton("📂 Browse")
         btn_browse.clicked.connect(self.browse_image)
-        
         btn_search = QPushButton("🌍 Search")
         btn_search.clicked.connect(self.search_image_online)
         
         img_row = QHBoxLayout()
-        img_row.addWidget(self.inp_image)
-        img_row.addWidget(btn_browse)
-        img_row.addWidget(btn_search)
+        img_row.addWidget(self.inp_image); img_row.addWidget(btn_browse); img_row.addWidget(btn_search)
         
-        # 5. Add Button
         btn_add = QPushButton("➕ Add Item")
         btn_add.setStyleSheet("background-color: #27ae60; color: white; padding: 10px; font-weight: bold;")
         btn_add.clicked.connect(self.add_item)
         
-        # 6. Add rows to layout
-        left_layout.addRow(QLabel("<b>NEW ITEM DETAILS</b>"))
         left_layout.addRow("Item Name:", self.inp_name)
         left_layout.addRow("Category:", self.inp_cat)
-        left_layout.addRow("Tax Rate (%):", self.inp_tax)      # Tax
-        left_layout.addRow("Dine-In Price:", self.inp_price_dine) # Price 1
-        left_layout.addRow("Delivery Price:", self.inp_price_del) # Price 2
+        left_layout.addRow("Tax Rate (%):", self.inp_tax)
+        left_layout.addRow("Dine-In Price:", self.inp_price_dine)
+        left_layout.addRow("Delivery Price:", self.inp_price_del)
         left_layout.addRow("Image:", img_row)
         left_layout.addRow(btn_add)
-        
-        self.layout.addWidget(left_frame, stretch=1)
+        left_vbox.addWidget(item_group)
+
+        self.layout.addWidget(left_container, stretch=1)
         
         # --- RIGHT: Current Menu Table ---
         right_frame = QFrame()
@@ -1063,53 +1135,80 @@ class MenuManager(QWidget):
         right_frame.setLayout(right_layout)
         
         self.table = QTableWidget()
-        # Columns: ID, Name, Dine, Del, Cat, Tax
         self.table.setColumnCount(6) 
         self.table.setHorizontalHeaderLabels(["ID", "Name", "Dine ₹", "Del. ₹", "Category", "Tax %"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        
+        # --- SELECTION STYLE FOR MAIN ITEM TABLE ---
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setStyleSheet("""
+            QTableWidget::item:selected {
+                background-color: #bdc3c7; 
+                color: black;
+            }
+        """)
+        
         right_layout.addWidget(self.table)
         
-        # Action Buttons
         btn_box = QHBoxLayout()
-        btn_refresh = QPushButton("🔄 Refresh List")
-        btn_refresh.clicked.connect(self.refresh_table)
+        btn_refresh = QPushButton("🔄 Refresh All")
+        btn_refresh.clicked.connect(self.refresh_all_data)
         btn_box.addWidget(btn_refresh)
         
-        btn_delete = QPushButton("🗑️ Delete Selected")
+        btn_delete = QPushButton("🗑️ Delete Item")
         btn_delete.setStyleSheet("background-color: #c0392b; color: white;")
         btn_delete.clicked.connect(self.delete_item)
         btn_box.addWidget(btn_delete)
         
         right_layout.addLayout(btn_box)
-        
         self.layout.addWidget(right_frame, stretch=2)
         
-        # Initial Load
+        self.refresh_all_data()
+
+    def refresh_all_data(self):
+        """Bug-Free Sync: Refreshes Categories and Items together."""
+        # 1. Load Categories
+        self.cat_table.setRowCount(0)
+        self.inp_cat.clear()
+        cats = database.get_all_categories()
+        for r, (cid, name, tax) in enumerate(cats):
+            self.cat_table.insertRow(r)
+            self.cat_table.setItem(r, 0, QTableWidgetItem(str(cid)))
+            self.cat_table.setItem(r, 1, QTableWidgetItem(name))
+            self.cat_table.setItem(r, 2, QTableWidgetItem(str(tax)))
+            self.inp_cat.addItem(name) # Adds current categories to dropdown
+
+        # 2. Refresh main table
         self.refresh_table()
 
-    # --- LOGIC FUNCTIONS ---
+    def add_category_logic(self):
+        name = self.inp_new_cat.text().upper().strip()
+        try: tax = float(self.inp_new_tax.text())
+        except: tax = 5.0
+        if name and database.add_category(name, tax):
+            self.inp_new_cat.clear()
+            self.refresh_all_data()
 
-    def auto_set_tax(self, category):
-        """Automatically suggests tax based on category."""
-        if category in ["DRINKS", "ALCOHOL"]:
-            self.inp_tax.setText("18.0")
-        else:
-            self.inp_tax.setText("5.0")
+    def delete_category_logic(self):
+        row = self.cat_table.currentRow()
+        if row >= 0:
+            cid = int(self.cat_table.item(row, 0).text())
+            name = self.cat_table.item(row, 1).text()
+            if QMessageBox.question(self, "Confirm", f"Delete category '{name}'?") == QMessageBox.StandardButton.Yes:
+                database.delete_category(cid)
+                self.refresh_all_data()
 
-    def browse_image(self):
-        from PyQt6.QtWidgets import QFileDialog
-        fname, _ = QFileDialog.getOpenFileName(self, 'Select Image', '', "Image files (*.jpg *.png *.jpeg)")
-        if fname:
-            self.inp_image.setText(fname)
-
-    def search_image_online(self):
-        import webbrowser
-        term = self.inp_name.text()
-        if term:
-            webbrowser.open(f"https://www.google.com/search?tbm=isch&q={term}")
-        else:
-            QMessageBox.warning(self, "Info", "Enter item name first!")
-
+    def auto_set_tax(self, category_name):
+        # 1. Get the list of categories from the database
+        cats = database.get_all_categories()
+        
+        # 2. Find the matching category and update the tax field
+        for _, name, tax in cats:
+            if name == category_name:
+                self.inp_tax.setText(str(tax))
+                break
+        
     def delete_item(self):
         row = self.table.currentRow()
         if row >= 0:
@@ -1134,10 +1233,11 @@ class MenuManager(QWidget):
         if fname: self.inp_image.setText(fname)
 
     def search_image_online(self):
-        if self.inp_name.text():
-            webbrowser.open(f"https://www.google.com/search?tbm=isch&q={self.inp_name.text()}")
-        else:
-            QMessageBox.warning(self, "Info", "Enter item name first!")
+        """Searches Google for the item name. No longer shows annoying popups."""
+        term = self.inp_name.text().strip()
+        if term:
+            import webbrowser
+            webbrowser.open(f"https://www.google.com/search?tbm=isch&q={term}")
 
     def add_item(self):
         """Captures all 6 inputs and sends them to the database."""
@@ -1194,7 +1294,11 @@ class POSInterface(QWidget):
         self.is_room = (mode == "ROOM_SERVICE")
         self.cart = []
         self.customer_info = None 
-        self.current_category = "ALL ITEMS" 
+        
+        # --- TRACKING STATE ---
+        self.current_category = "ALL ITEMS" # Tracks active sidebar selection
+        self.all_items = [] # Stores full database menu
+        
         self.db_price_mode = "DELIVERY" if mode == "DELIVERY" else "DINE_IN"
         
         if self.table_num:
@@ -1210,7 +1314,7 @@ class POSInterface(QWidget):
         self.cat_frame.setStyleSheet("background-color: #2c3e50; border-right: 1px solid gray;")
         self.cat_layout = QVBoxLayout()
         self.cat_frame.setLayout(self.cat_layout)
-        self.refresh_categories()
+        self.refresh_categories() # Populates and connects buttons
         self.layout.addWidget(self.cat_frame)
         
         # --- COL 2: MENU GRID ---
@@ -1221,6 +1325,7 @@ class POSInterface(QWidget):
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("🔍 Search Item...")
         self.search_bar.setFixedHeight(40)
+        # Connects search bar to the filter logic
         self.search_bar.textChanged.connect(self.filter_menu)
         menu_layout.addWidget(self.search_bar)
         
@@ -1275,7 +1380,7 @@ class POSInterface(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setStyleSheet("border: 1px solid #ddd;")
 
-# 1. Select the entire row, not just one cell
+        # 1. Select the entire row, not just one cell
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         
         # 2. Allow only one row to be selected at a time
@@ -1384,102 +1489,118 @@ class POSInterface(QWidget):
         self.cat_layout.addStretch()
 
     def refresh_menu(self):
-        """Draws the POS grid buttons for items."""
-        # 1. Clear previous buttons
-        for i in reversed(range(self.menu_grid.count())): 
-            widget = self.menu_grid.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
-                
-        # 2. Get Items from DB (Now returns tax_rate from the items table)
         self.all_items = database.get_menu_items(self.db_price_mode)
-        
-        # 3. Filter (Search/Category)
-        filtered = [
-            i for i in self.all_items 
-            if (self.current_category == "ALL ITEMS" or i['category'] == self.current_category)
-            and (self.search_bar.text().lower() in i['name'].lower())
-        ]
-        
-        # 4. Draw Buttons
-        row, col = 0, 0
-        for item in filtered:
-            btn = QToolButton()
-            # Displaying name and price on the button
-            btn.setText(f"{item['name']}\n₹ {item['price']}")
-            btn.setFixedSize(130, 130)
-            btn.setStyleSheet("""
-                QToolButton {
-                    background-color: white; 
-                    border: 1px solid #ccc; 
-                    border-radius: 8px;
-                    font-weight: bold;
-                    padding: 5px;
-                }
-                QToolButton:hover { background-color: #e0f7fa; border: 2px solid #26c6da; }
-            """)
-            
-            # --- IMAGE DISPLAY LOGIC ---
-            if item.get('image') and os.path.exists(item['image']):
-                btn.setIcon(QIcon(item['image']))
-                btn.setIconSize(QSize(80, 80))
-                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-            
-            # --- CLICK EVENT: Passes the 'item' dictionary containing 'tax_rate' ---
-            btn.clicked.connect(lambda checked, i=item: self.add_to_cart(i))
-            
-            self.menu_grid.addWidget(btn, row, col)
-            col += 1
-            if col > 3: 
-                col = 0
-                row += 1
+        self.apply_filter()
 
     def render_menu_items(self, items):
+        # 1. Clear existing grid
         for i in reversed(range(self.menu_grid.count())): 
             widget = self.menu_grid.itemAt(i).widget()
             if widget: widget.setParent(None)
+
         row, col = 0, 0
         for item in items:
-            # UNPACK 6 VALUES
-            i_id, name, cat, price, tax, db_img = item
+            name = item.get('name', 'Unknown').strip()
+            try:
+                price = float(item.get('price', 0))
+            except:
+                price = 0.0
+            db_img = item.get('image', "") 
+
+            # --- THE CARD CONTAINER ---
+            card = QFrame()
+            card.setFixedSize(160, 200) # Uniform card size
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: white;
+                    border: 1px solid #dcdde1;
+                    border-radius: 12px;
+                }
+                QFrame:hover {
+                    border: 2px solid #2ecc71; /* Professional Green highlight */
+                }
+            """)
             
-            btn = QPushButton()
-            btn.setFixedSize(140, 120)
-            
-            import os
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 8) # No margin at top for image
+            card_layout.setSpacing(5)
+
+            # --- IMAGE SECTION (TOP) ---
+            img_label = QLabel()
+            img_label.setFixedSize(160, 110) # Fixed image header
+            img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # Style to round only top corners
+            img_label.setStyleSheet("border-top-left-radius: 12px; border-top-right-radius: 12px; border: none; background: #f8f9fa;")
+
             final_img_path = None
-            if db_img and os.path.exists(db_img):
-                final_img_path = db_img
+            if db_img and os.path.exists(str(db_img)):
+                final_img_path = str(db_img)
             else:
                 for ext in [".png", ".jpg", ".jpeg"]:
-                    test_path = os.path.join("images", name + ext)
+                    test_path = os.path.join("images", f"{name}{ext}")
                     if os.path.exists(test_path):
                         final_img_path = test_path
                         break
-            
+
             if final_img_path:
-                btn.setIcon(QIcon(final_img_path))
-                btn.setIconSize(QSize(60, 60))
-                btn.setText(f"{name}\n₹{price:.0f}")
-                btn.setStyleSheet("QPushButton { background-color: white; border: 1px solid #bdc3c7; border-radius: 10px; font-weight: bold; text-align: bottom; padding-bottom: 5px; color: black; } QPushButton:hover { border: 2px solid #2ecc71; background-color: #f0fdf4; }")
+                pixmap = QPixmap(final_img_path)
+                # Smooth scaling to fill the header width
+                img_label.setPixmap(pixmap.scaled(160, 110, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
+                img_label.setScaledContents(True)
             else:
-                btn.setText(f"{name}\n\n₹{price:.0f}")
-                btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; border-radius: 10px; border: none; } QPushButton:hover { background-color: #2980b9; }")
+                img_label.setText("🍽️")
+                img_label.setStyleSheet("font-size: 30px; color: #bdc3c7; border: none;")
+
+            card_layout.addWidget(img_label)
+
+            # --- TEXT SECTION (BOTTOM) ---
+            info_layout = QVBoxLayout()
+            info_layout.setContentsMargins(10, 0, 10, 0)
             
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet("font-weight: bold; color: #2c3e50; font-size: 13px; border: none;")
+            name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name_lbl.setWordWrap(True)
+            
+            price_lbl = QLabel(f"₹{price:.0f}")
+            price_lbl.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 14px; border: none;")
+            price_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            info_layout.addWidget(name_lbl)
+            info_layout.addWidget(price_lbl)
+            card_layout.addLayout(info_layout)
+
+            # --- THE CLICKABLE OVERLAY ---
+            # We put a transparent button over the entire card
+            btn = QPushButton(card)
+            btn.setFixedSize(160, 200)
+            btn.setStyleSheet("background: transparent; border: none;")
             btn.clicked.connect(lambda ch, i=item: self.add_to_cart(i))
-            self.menu_grid.addWidget(btn, row, col)
+            
+            self.menu_grid.addWidget(card, row, col)
+            
             col += 1
             if col > 3: 
                 col = 0
                 row += 1
-        self.menu_grid.setRowStretch(row+1, 1)
+
+        self.menu_grid.setRowStretch(row + 1, 1)
 
     def filter_category(self, category_name):
-        self.current_category = category_name
-        self.refresh_menu()
+        self.current_category = "ALL ITEMS" if category_name == "ALL" else category_name
+        self.apply_filter()
 
     def filter_menu(self):
-        self.refresh_menu()
+        self.apply_filter()
+
+    def apply_filter(self):
+        search_text = self.search_bar.text().lower()
+        filtered = [
+            i for i in self.all_items 
+            if (self.current_category == "ALL ITEMS" or i['category'] == self.current_category)
+            and (search_text in i['name'].lower())
+        ]
+        self.render_menu_items(filtered)
 
     def add_to_cart(self, item_data):
         """Adds item. separates items if they have notes."""
@@ -1678,7 +1799,8 @@ class POSInterface(QWidget):
         QTimer.singleShot(1500, lambda: self.lbl_alert.hide())
     
     def print_bill_and_close(self):
-        if not self.cart: return
+        if not self.cart: 
+            return
 
         # 1. Math
         subtotal = sum(item['price'] * item['qty'] for item in self.cart)
@@ -1694,37 +1816,72 @@ class POSInterface(QWidget):
         final_total = gross_total - discount_amount
 
         # 2. Print
-        printer.generate_bill(self.table_num, self.cart, final_total, discount_amount, self.customer_info)
+        printer.generate_bill(
+            order_type=self.mode, 
+            table_num=self.table_num, 
+            cart_items=self.cart, 
+            total_amount=final_total, 
+            discount=discount_amount, 
+            customer=self.customer_info
+        )
         
-        # 3. Checkout (Sets DB status to AVAILABLE)
-        database.checkout_table(self.table_num) 
+        # 3. Checkout Logic
+        if self.mode == "ROOM_SERVICE":
+            database.checkout_room_orders(self.table_num) 
+        else:
+            database.checkout_table(self.table_num) 
         
-        # --- REFRESH TABLES ---
-        if self.tab_ref and hasattr(self.tab_ref, 'refresh_tables'):
-            self.tab_ref.refresh_tables()
+        # --- UNIVERSAL REFRESH ---
+        if self.tab_ref:
+            if self.mode == "ROOM_SERVICE" and hasattr(self.tab_ref, 'refresh_rooms'):
+                self.tab_ref.refresh_rooms()
+            elif hasattr(self.tab_ref, 'refresh_tables'):
+                self.tab_ref.refresh_tables()
         # ----------------------------------------------------
             
-        QMessageBox.information(self, "Closed", f"Bill Generated!")
+        QMessageBox.information(self, "Closed", f"Bill Generated for {self.mode}!")
         self.close()
-    
+
     def checkout_takeout(self):
         if not self.cart: return
-        try: disc = float(self.inp_discount.text())
-        except: disc = 0
+        try: 
+            disc = float(self.inp_discount.text())
+        except: 
+            disc = 0
+            
         total = self.current_subtotal + self.current_tax
         final = total * (1 - (disc/100))
         discount_amt = total - final
         
         if self.mode == "DELIVERY":
-            if not self.customer_info: self.set_customer()
-            if not self.customer_info: return
+            if not self.customer_info: 
+                self.set_customer()
+            if not self.customer_info: 
+                return
+            
             database.save_delivery_order(self.cart, self.customer_info['name'], self.customer_info['phone'], self.customer_info['address'])
             printer.generate_kot("DELIVERY", self.cart)
-            printer.generate_bill("DELIVERY", self.cart, final, discount=discount_amt, customer=self.customer_info)
-        else:
+            
+            printer.generate_bill(
+                order_type="DELIVERY", 
+                table_num="", 
+                cart_items=self.cart, 
+                total_amount=final, 
+                discount=discount_amt, 
+                customer=self.customer_info
+            )
+            
+        elif self.mode == "TAKEOUT":
             database.save_takeout_order(self.cart)
             printer.generate_kot("TAKEOUT", self.cart)
-            printer.generate_bill("TAKEOUT", self.cart, final, discount=discount_amt)
+            
+            printer.generate_bill(
+                order_type="TAKEOUT", 
+                table_num="", 
+                cart_items=self.cart, 
+                total_amount=final, 
+                discount=discount_amt
+            )
             
         QMessageBox.information(self, "Done", "Order Processed!")
         self.cart = []
