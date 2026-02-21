@@ -87,32 +87,24 @@ def seed_data():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Check if items already exist
     try:
         cursor.execute("SELECT count(*) FROM items")
         if cursor.fetchone()[0] > 0:
             conn.close()
-            return # Data already exists, skip seeding
+            return
     except:
-        pass # Table might not exist yet, allow continuation
+        pass 
 
     print("🌱 Seeding default menu...")
     
     # 2. Insert Items (Matching the new schema: Name, Category, Price)
     # Note: The new DB uses 'category' as text (e.g., 'FOOD') instead of IDs
     items = [
-        ("Classic Burger", "FOOD", 150, 150, 160, 0.0),
-        ("Cheese Pizza", "FOOD", 280, 280, 300, 5.0),
-        ("Red Sauce Pasta", "FOOD", 220, 220, 240, 5.0),
-        ("French Fries", "SNACKS", 90, 90, 100, 5.0),
-        ("Coca Cola", "DRINKS", 60, 60, 65, 0.0),
-        ("Cold Coffee", "DRINKS", 120, 120, 130, 12.0),
-        ("Vanilla Scoop", "DESSERT", 80, 80, 90, 18.0),
-        ("Brownie", "DESSERT", 150, 150, 165, 18.0),
+        ("Classic Burger", "FOOD", 150, 150, 160, "Burger.jpg", 0.0),
     ]
     
     try:
-        cursor.executemany("INSERT INTO items (name, category, price, price_dinein, price_delivery, tax_rate) VALUES (?, ?, ?, ?, ?, ?)", items)
+        cursor.executemany("INSERT INTO items (name, category, price, price_dinein, price_delivery, image_path, tax_rate) VALUES (?, ?, ?, ?, ?, ?, ?)", items)
         conn.commit()
         print("✅ Data Seeded Successfully.")
     except Exception as e:
