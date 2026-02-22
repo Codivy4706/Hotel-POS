@@ -353,70 +353,113 @@ class SettingsWindow(QDialog):
 class ReportsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("📊 Business Analytics")
-        self.resize(600, 400)
-        self.setStyleSheet("background-color: white; font-size: 14px;")
+        self.setWindowTitle("📊 Business Analytics Dashboard")
+        self.resize(1000, 700)
+        self.setStyleSheet("background-color: #f4f6f9; font-family: 'Segoe UI';")
         
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
         
-        # --- Date Selection ---
+        # --- TOP CONTROLS ---
         top_layout = QHBoxLayout()
-        top_layout.addWidget(QLabel("Select Date:"))
+        
+        lbl_date = QLabel("📅 Select Date:")
+        lbl_date.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        top_layout.addWidget(lbl_date)
         
         self.inp_date = QLineEdit()
-        self.inp_date.setText(datetime.date.today().strftime("%Y-%m-%d")) # Default Today
+        self.inp_date.setText(datetime.date.today().strftime("%Y-%m-%d"))
+        self.inp_date.setFixedWidth(150)
+        self.inp_date.setStyleSheet("padding: 5px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; background-color: white;")
         top_layout.addWidget(self.inp_date)
         
         btn_refresh = QPushButton("🔄 Generate Report")
-        btn_refresh.setStyleSheet("background-color: #3498db; color: white;")
+        btn_refresh.setFixedWidth(150)
+        btn_refresh.setStyleSheet("background-color: #2980b9; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
         btn_refresh.clicked.connect(self.load_report)
         top_layout.addWidget(btn_refresh)
         
-        layout.addLayout(top_layout)
+        top_layout.addStretch() # Pushes the controls to the left neatly
+        main_layout.addLayout(top_layout)
         
-        # --- Cards Layout ---
-        self.card_layout = QGridLayout()
-        layout.addLayout(self.card_layout)
+        # --- 1. KPI CARDS ROW ---
+        self.kpi_layout = QHBoxLayout()
+        main_layout.addLayout(self.kpi_layout)
+        
+        # --- 2. DETAILED DATA TABLE ---
+        lbl_details = QLabel("Detailed Transactions")
+        lbl_details.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        lbl_details.setStyleSheet("margin-top: 20px; color: #333;")
+        main_layout.addWidget(lbl_details)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["Receipt ID", "Date", "Order Type", "Amount (₹)", "Status", "Guest Name", "Phone"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setStyleSheet("""
+            QTableWidget { background-color: white; border-radius: 8px; border: 1px solid #ddd; font-size: 13px; }
+            QHeaderView::section { background-color: #ecf0f1; font-weight: bold; padding: 8px; border: none; }
+        """)
+        main_layout.addWidget(self.table)
         
         # Initial Load
         self.load_report()
         
-    def create_card(self, title, amount, color, row, col):
+    def create_kpi_card(self, title, amount, color):
         frame = QFrame()
-        frame.setStyleSheet(f"background-color: {color}; color: white; border-radius: 10px;")
+        frame.setStyleSheet(f"background-color: {color}; color: white; border-radius: 8px;")
+        frame.setFixedHeight(95) # Sleek horizontal strip instead of giant blocks
+        
         l = QVBoxLayout()
         frame.setLayout(l)
         
         lbl_title = QLabel(title)
-        lbl_title.setFont(QFont("Arial", 12))
+        lbl_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         
-        lbl_amt = QLabel(f"₹{amount:,.2f}")
-        lbl_amt.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        lbl_amt = QLabel(f"₹ {amount:,.2f}")
+        lbl_amt.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
         
         l.addWidget(lbl_title)
         l.addWidget(lbl_amt)
-        self.card_layout.addWidget(frame, row, col)
+        self.kpi_layout.addWidget(frame)
 
     def load_report(self):
-        # Clear old cards
-        for i in reversed(range(self.card_layout.count())): 
-            self.card_layout.itemAt(i).widget().setParent(None)
+        # Clear old KPI cards
+        for i in reversed(range(self.kpi_layout.count())): 
+            widget = self.kpi_layout.itemAt(i).widget()
+            if widget: widget.setParent(None)
             
         date_str = self.inp_date.text()
-        data = database.get_daily_report(date_str)
         
-        # 1. Total Revenue (Big Card)
-        self.create_card("TOTAL REVENUE", data['total'], "#2c3e50", 0, 0) # Dark Blue
+        # 1. Load the Summary Numbers (Your existing function)
+        try:
+            data = database.get_daily_report(date_str)
+            self.create_kpi_card("TOTAL REVENUE", data['total'], "#2c3e50") 
+            self.create_kpi_card("🍔 FOOD SALES", data['food'], "#e67e22") 
+            self.create_kpi_card("🛏️ ROOM REVENUE", data['rooms'], "#27ae60") 
+            self.create_kpi_card("🎉 EVENTS", data['halls'], "#8e44ad") 
+        except Exception as e:
+            print(f"Error loading summary: {e}")
+
+        # 2. Load the Detailed Table
+        self.refresh_table(date_str)
         
-        # 2. Food Sales
-        self.create_card("🍔 Food Sales", data['food'], "#e67e22", 1, 0) # Orange
-        
-        # 3. Room Revenue
-        self.create_card("🛏️ Room Revenue", data['rooms'], "#27ae60", 1, 1) # Green
-        
-        # 4. Hall/Events
-        self.create_card("🎉 Events", data['halls'], "#8e44ad", 2, 0) # Purple
+    def refresh_table(self, date_str):
+        self.table.setRowCount(0)
+        try:
+            transactions = database.get_daily_transactions(date_str)
+            self.table.setRowCount(len(transactions))
+            
+            for r, row in enumerate(transactions):
+                self.table.setItem(r, 0, QTableWidgetItem(str(row[0])))              # ID
+                self.table.setItem(r, 1, QTableWidgetItem(str(row[1])))              # Date
+                self.table.setItem(r, 2, QTableWidgetItem(str(row[2])))              # Type
+                self.table.setItem(r, 3, QTableWidgetItem(f"₹ {float(row[3]):.2f}")) # Amount
+                self.table.setItem(r, 4, QTableWidgetItem(str(row[4])))              # Status
+                self.table.setItem(r, 5, QTableWidgetItem(str(row[5])))              # Guest Name
+                self.table.setItem(r, 6, QTableWidgetItem(str(row[6])))              # Phone
+        except Exception as e:
+            print(f"Table Data Error: {e}")
 
 # ==========================================
 # 4. TABBED INTERFACE COMPONENTS
@@ -1167,8 +1210,6 @@ class MenuManager(QWidget):
         self.refresh_all_data()
 
     def refresh_all_data(self):
-        """Bug-Free Sync: Refreshes Categories and Items together."""
-        # 1. Load Categories
         self.cat_table.setRowCount(0)
         self.inp_cat.clear()
         cats = database.get_all_categories()
@@ -1177,9 +1218,8 @@ class MenuManager(QWidget):
             self.cat_table.setItem(r, 0, QTableWidgetItem(str(cid)))
             self.cat_table.setItem(r, 1, QTableWidgetItem(name))
             self.cat_table.setItem(r, 2, QTableWidgetItem(str(tax)))
-            self.inp_cat.addItem(name) # Adds current categories to dropdown
+            self.inp_cat.addItem(name, cid) 
 
-        # 2. Refresh main table
         self.refresh_table()
 
     def add_category_logic(self):
@@ -1213,17 +1253,23 @@ class MenuManager(QWidget):
         row = self.table.currentRow()
         if row >= 0:
             item_id = self.table.item(row, 0).text()
-            confirm = QMessageBox.question(self, "Confirm", f"Delete Item ID {item_id}?", 
-                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            confirm = QMessageBox.question(
+                self, "Confirm", f"Delete Item {item_id}?", 
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
             if confirm == QMessageBox.StandardButton.Yes:
-                # Assuming you have a delete function in database.py
-                import sqlite3
-                conn = sqlite3.connect(database.DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM items WHERE id=?", (item_id,))
-                conn.commit()
-                conn.close()
+                # Force item_id to be an integer so SQLite deletes it properly
+                database.delete_item(int(item_id)) 
                 self.refresh_table()
+                
+                # --- THE ULTIMATE SYNC HAMMER ---
+                from PyQt6.QtWidgets import QApplication
+                for widget in QApplication.topLevelWidgets():
+                    if widget.__class__.__name__ == "HotelApp":
+                        widget.sync_all_pos_menus()
+                        
+                QMessageBox.information(self, "Success", "Item permanently deleted!")
         else:
             QMessageBox.warning(self, "Selection", "Select an item to delete.")
 
@@ -1240,27 +1286,43 @@ class MenuManager(QWidget):
             webbrowser.open(f"https://www.google.com/search?tbm=isch&q={term}")
 
     def add_item(self):
-        """Captures all 6 inputs and sends them to the database."""
         name = self.inp_name.text()
         p_dine = self.inp_price_dine.text()
         p_del = self.inp_price_del.text()
-        cat = self.inp_cat.currentText()
         img = self.inp_image.text()
         tax = self.inp_tax.text()
         
-        if name and p_dine and p_del and tax:
-            # Pass all 6 arguments to database.py
-            database.add_item(name, p_dine, p_del, cat, img, tax)
+        # 1. Get the HIDDEN Category ID
+        cat_idx = self.inp_cat.currentIndex()
+        if cat_idx == -1: return
+        cat_id = self.inp_cat.itemData(cat_idx) 
+        
+        # 2. Safety Defaults
+        if not name or not p_dine:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Error", "Name and Dine-In Price are required!")
+            return
             
-            self.refresh_table()
+        if not p_del: p_del = p_dine
+        if not tax: tax = "0.0"
+        
+        # 3. Send the 6 arguments
+        success = database.add_item(name, cat_id, p_dine, p_del, img, tax)
+        
+        if success:
             # Clear inputs
             self.inp_name.clear()
             self.inp_price_dine.clear()
             self.inp_price_del.clear()
             self.inp_image.clear()
-            self.auto_set_tax(cat) 
-        else:
-            QMessageBox.warning(self, "Error", "Name, Both Prices, and Tax are required!")
+            
+            self.refresh_table()
+
+            # --- THE ULTIMATE SYNC HAMMER ---
+            from PyQt6.QtWidgets import QApplication
+            for widget in QApplication.topLevelWidgets():
+                if widget.__class__.__name__ == "HotelApp":
+                    widget.sync_all_pos_menus()
 
     def refresh_table(self):
         """Refreshes the table and explicitly fills the 6th Tax column."""
@@ -1997,6 +2059,19 @@ class HotelApp(QMainWindow):
         
         self.tab_delivery.refresh_categories()
         self.tab_delivery.refresh_menu()
+
+    def sync_all_pos_menus(self):
+        # Loop through every tab inside self.tabs
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            
+            # If the tab has a 'refresh_menu' function trigger it
+            if hasattr(tab, 'refresh_menu'):
+                tab.refresh_menu()
+                
+            # If the tab also has categories that need refreshing, trigger that too
+            if hasattr(tab, 'refresh_categories'):
+                tab.refresh_categories()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

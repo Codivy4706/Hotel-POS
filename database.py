@@ -1,6 +1,5 @@
 import sqlite3
 import datetime
-from PyQt6.QtWidgets import QMessageBox
 today = datetime.date.today().strftime("%Y-%m-%d")
 
 DB_NAME = 'hotel_restaurant.db'
@@ -27,7 +26,7 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM categories")
     if cursor.fetchone()[0] == 0:
         cursor.executemany("INSERT INTO categories (name, tax_rate) VALUES (?, ?)", 
-                           [('FOOD', 0.0), ('DRINKS', 12.0), ('SNACKS', 5.0), ('DESSERT', 18.0)])
+                           [('FOOD', 0.0), ('DRINKS', 12.0), ('SNACKS', 5.0)])
 
     # 3. ITEMS
     cursor.execute('''CREATE TABLE IF NOT EXISTS items (
@@ -144,8 +143,8 @@ def get_menu_items(price_mode="DINE_IN"):
             "id": row[0],
             "name": row[1],
             "price": final_price,
-            "category": row[4], # Fixed: UI looks for 'category'
-            "image": row[5] if row[5] else "", # Matches your existing 'image' key
+            "category": row[4],
+            "image": row[5] if row[5] else "", 
             "tax_rate": row[6] if row[6] is not None else 0.0 
         })
         
@@ -195,7 +194,7 @@ def save_order(target_id, cart_items, order_type="DINE_IN"):
         """, (order_id, item['name'], item['qty'], item['price'], tax_rate, total, printed, note))
         
     if not is_room:
-        print(f"DEBUG: Updating Table {target_id} to OCCUPIED") # VERIFICATION LINE
+        print(f"DEBUG: Updating Table {target_id} to OCCUPIED")
         cursor.execute("UPDATE dining_tables SET status = 'OCCUPIED' WHERE id = ?", (target_id,))
 
     conn.commit()
@@ -387,45 +386,68 @@ def get_sales_history():
     # Returns: [(ID, Date, Type, Table, "2x Burger, 1x Coke", TotalPrice), ...]
 
 def save_takeout_order(cart_items):
-    """Saves a Takeout order directly to history (Closed status)."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    """Saves a Takeout order with the current date so it appears on the dashboard."""
+    import sqlite3
+    import datetime 
     
-    # 1. Create Order (Type=TAKEOUT, Status=CLOSED)
-    cursor.execute("INSERT INTO orders (order_type, status) VALUES ('TAKEOUT', 'CLOSED')")
-    order_id = cursor.lastrowid
-    
-    # 2. Insert Items
-    for item in cart_items:
-        total = item['price'] * item['qty']
-        
-        # --- THE FIX: Use .get('tax_rate', 5.0) instead of item['tax'] ---
-        tax_val = item.get('tax_rate', 5.0)
-        
-        cursor.execute("""
-            INSERT INTO order_items (order_id, item_name, quantity, unit_price, tax_rate, total_price)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (order_id, item['name'], item['qty'], item['price'], tax_val, total))
-        
-    conn.commit()
-    conn.close()
-    return order_id
-
-def save_delivery_order(cart_items, name, phone, address):
-    """Saves a Delivery order with customer details."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
     try:
-        # 1. Create Order - Now matches the updated schema above
+        # 1. Grab today's date so the Dashboard filter can actually find it
+        today_date = datetime.date.today().strftime("%Y-%m-%d")
+        
+        # 2. Create Order - NOW WITH order_date!
         cursor.execute("""
-            INSERT INTO orders (order_type, status, customer_name, customer_phone, customer_address) 
-            VALUES ('DELIVERY', 'CLOSED', ?, ?, ?)
-        """, (name, phone, address))
+            INSERT INTO orders (order_type, status, order_date) 
+            VALUES ('TAKEOUT', 'CLOSED', ?)
+        """, (today_date,))
         
         order_id = cursor.lastrowid
         
-        # 2. Insert Items
+        # 3. Insert Items into the linked table
+        for item in cart_items:
+            total = item['price'] * item['qty']
+            
+            # Using the safe .get() method we fixed earlier
+            tax_val = item.get('tax_rate', 5.0)
+            
+            cursor.execute("""
+                INSERT INTO order_items (order_id, item_name, quantity, unit_price, tax_rate, total_price)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (order_id, item['name'], item['qty'], item['price'], tax_val, total))
+            
+        conn.commit()
+        return order_id
+        
+    except Exception as e:
+        print(f"Error saving takeout: {e}")
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+        
+def save_delivery_order(cart_items, name, phone, address):
+    """Saves a Delivery order with customer details and the current date."""
+    import sqlite3
+    import datetime # Ensure we have the datetime module to stamp the order!
+    
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    try:
+        # 1. Grab today's date so the Dashboard can actually find it
+        today_date = datetime.date.today().strftime("%Y-%m-%d")
+        
+        # 2. Create Order - NOW WITH order_date!
+        cursor.execute("""
+            INSERT INTO orders (order_type, status, customer_name, customer_phone, customer_address, order_date) 
+            VALUES ('DELIVERY', 'CLOSED', ?, ?, ?, ?)
+        """, (name, phone, address, today_date))
+        
+        order_id = cursor.lastrowid
+        
+        # 3. Insert Items (Unchanged)
         for item in cart_items:
             total = item['price'] * item['qty']
             tax_rate = item.get('tax_rate', 5.0) 
@@ -463,27 +485,26 @@ def delete_category(cat_id):
     conn.commit()
     conn.close()
 
-def add_item(name, p_dine, p_del, category_name, img_path, tax_rate=5.0):
-    """Inserts a new item into the items table based on GUI input."""
+def add_item(name, category_id, p_dine, p_del, img_path, tax_rate=5.0):
+    """Inserts a new item ensuring variables map to the correct columns."""
+    import sqlite3
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Get the category_id from the category_name
-    cursor.execute("SELECT id FROM categories WHERE name = ?", (category_name,))
-    row = cursor.fetchone()
-    cat_id = row[0] if row else None
-    
-    # 2. Insert into items table matching your schema
-    query = """
-        INSERT INTO items (name, category, category_id, price, price_dinein, price_delivery, image_path, tax_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    
-    # Values tuple now matches the 8 columns in your items table
-    cursor.execute(query, (name, category_name, cat_id, p_dine, p_dine, p_del, img_path, tax_rate))
-    
-    conn.commit()
-    conn.close()
+    try:
+        query = """
+            INSERT INTO items (name, category_id, price_dinein, price_delivery, image_path, tax_rate)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """
+        # Variables are locked in the exact order of the columns
+        cursor.execute(query, (name, category_id, float(p_dine), float(p_del), img_path, float(tax_rate)))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return False
+    finally:
+        conn.close()
 
 def delete_item(item_id):
     conn = sqlite3.connect(DB_NAME)
@@ -516,6 +537,56 @@ def mark_kot_printed(target_id, is_room=False):
         conn.commit()
         
     conn.close()
+
+def get_daily_transactions(date_str):
+    """Combines Food Orders and Room Bookings into one detailed master list."""
+    import sqlite3
+    conn = sqlite3.connect(DB_NAME) 
+    cursor = conn.cursor()
+    
+    try:
+        query = """
+            -- PART 1: RESTAURANT & ROOM SERVICE ORDERS
+            SELECT 
+                'FOOD-' || o.id as rec_id, 
+                o.order_date, 
+                o.order_type, 
+                COALESCE(SUM(oi.total_price), 0) as amount, 
+                o.status,
+                COALESCE(o.customer_name, 'Walk-in Guest') as guest_name,
+                COALESCE(o.customer_phone, '-') as phone
+            FROM orders o
+            LEFT JOIN order_items oi ON o.id = oi.order_id
+            WHERE o.order_date = ?
+            GROUP BY o.id
+
+            UNION ALL
+
+            -- PART 2: ROOM BOOKINGS
+            SELECT 
+                'ROOM-' || b.id as rec_id, 
+                b.check_in_date, 
+                'ROOM_BOOKING' as order_type, 
+                COALESCE(r.price_per_night, 0) as amount, 
+                'CONFIRMED' as status,
+                COALESCE(b.guest_name, 'Room Guest') as guest_name, -- FIXED!
+                COALESCE(b.guest_phone, '-') as phone               -- FIXED!
+            FROM bookings b
+            JOIN rooms r ON b.room_number = r.room_number
+            WHERE b.check_in_date LIKE ?
+            
+            ORDER BY rec_id DESC
+        """
+        
+        # Pass date_str twice (once for the top WHERE, once for the bottom WHERE)
+        cursor.execute(query, (date_str, f"{date_str}%"))
+        return cursor.fetchall()
+        
+    except Exception as e:
+        print(f"Transactions Error: {e}")
+        return []
+    finally:
+        conn.close()
 
 # ==========================================
 # ROOM MANAGEMENT DATABASE FUNCTIONS
@@ -692,8 +763,6 @@ def add_custom_table(name):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        # We insert into 'table_number' (the string column) 
-        # and let 'id' auto-increment itself.
         cursor.execute("INSERT INTO dining_tables (table_number, status) VALUES (?, 'AVAILABLE')", (name,))
         conn.commit()
         success = True
